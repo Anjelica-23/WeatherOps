@@ -1,0 +1,29 @@
+/* ── Pulse ring for high-severity DivIcon markers ── */
+@keyframes pulseRing {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+  70% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+}
+
+/* Leaflet tooltip base override for dark theme */
+.leaflet-tooltip {
+  background: #0f1117 !important;
+  border: 1px solid #2a2f3d !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.6) !important;
+  padding: 8px 10px !important;
+  color: #e8ecf4 !important;
+}
+
+.leaflet-tooltip-top::before {
+  border-top-color: #2a2f3d !important;
+}

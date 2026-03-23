@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------
+   ROOT LAYOUT CONTROL
+------------------------------------- */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;   /* Prevent page scroll */
+}
+
+/* ------------------------------------
+   LEAFLET FIXES
+------------------------------------- */
+
+/* Prevent map from overlapping UI */
+.leaflet-container {
+  height: 100% !important;
+  width: 100% !important;
+  z-index: 0 !important;
+}
+
+/* Prevent tiles from escaping container */
+.leaflet-pane,
+.leaflet-top,
+.leaflet-bottom {
+  z-index: 0 !important;
+}
+
+/* ------------------------------------
+   OPTIONAL: Smooth marker animation
+------------------------------------- */
+
+.pulse-marker {
+  animation: pulse 1.8s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+}
