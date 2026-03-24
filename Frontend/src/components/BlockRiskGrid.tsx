@@ -30,7 +30,7 @@ export default function BlockRiskGrid({ data }: { data: BlockRisk[] }) {
             {["flood", "heat", "wind", "landslide"].map((h) => (
               <div key={h} className="flex justify-between items-center py-2.5 border-b border-[#2a2f3d] last:border-none">
                 <span className="uppercase text-sm text-zinc-400">{h}</span>
-                <span className={`px-4 py-0.5 text-xs font-medium rounded-full ${getColor(block[h as keyof BlockRisk])}`}>
+                <span className={`px-4 py-0.5 text-xs font-medium rounded-full ${getColor(block[h as keyof BlockRisk] ?? "")}`}>
                   {block[h as keyof BlockRisk]}
                 </span>
               </div>
