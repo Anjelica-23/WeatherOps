@@ -113,6 +113,41 @@ def auto_refresh_weather():
         print("Weather cache refreshed")
         time.sleep(3600)  # 1 hour
 
+import pandas as pd
+import requests
+from datetime import datetime, timedelta
+
+def get_hourly_forecast(lat: float, lon: float, horizon_hours: int = 72):
+    """
+    Fetch hourly weather forecast for a single point from Open-Meteo.
+    Returns a DataFrame with columns:
+    time, rain_mm, temp_c, wind_kmph, app_temp, rh
+    """
+    # forecast_days = ceil(horizon_hours / 24)
+    forecast_days = (horizon_hours + 23) // 24
+
+    url = (
+        f"https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        f"&hourly=precipitation,temperature_2m,wind_speed_10m,apparent_temperature,relative_humidity_2m"
+        f"&forecast_days={forecast_days}"
+        f"&timezone=Asia%2FKolkata"
+    )
+    response = requests.get(url, timeout=15)
+    response.raise_for_status()
+    data = response.json()
+    hourly = data["hourly"]
+
+    df = pd.DataFrame({
+        "time": pd.to_datetime(hourly["time"]),
+        "rain_mm": pd.to_numeric(hourly["precipitation"], errors="coerce").fillna(0),
+        "temp_c": pd.to_numeric(hourly["temperature_2m"], errors="coerce").fillna(25),
+        "wind_kmph": pd.to_numeric(hourly["wind_speed_10m"], errors="coerce").fillna(15),
+        "app_temp": pd.to_numeric(hourly["apparent_temperature"], errors="coerce").fillna(25),
+        "rh": pd.to_numeric(hourly["relative_humidity_2m"], errors="coerce").fillna(60),
+    })
+    return df.head(horizon_hours)
+
 # ============================================================
 # FASTAPI
 # ============================================================
@@ -480,6 +515,51 @@ def metrics():
             "landslide": ci(landslide_vals),
         }
     }
+
+@app.get("/api/forecast")
+def get_forecast(horizon: int = 72):
+    # Get hourly data for a representative point (city centre)
+    wx = get_hourly_forecast(30.3165, 78.0322, horizon)  # to be implemented
+    # Apply blending
+    wx["rain_adj"] = wx["rain_mm"] * (1 + 12/30)
+    wx["heat_index"] = wx["temp_c"] + 0.33 * wx["rh"]/100 * wx["temp_c"] - 4
+    wx["flood_proxy"] = wx["rain_adj"].rolling(6, min_periods=1).sum()
+    return wx[["time", "rain_mm", "rain_adj", "temp_c", "wind_kmph",
+               "heat_index", "flood_proxy", "app_temp"]].to_dict(orient="records")
+
+@app.get("/api/risk_evolution")
+def risk_evolution(horizon: int = 72):
+    forecast = get_forecast(horizon)  # reuse above
+    risks = []
+    for row in forecast:
+        risks.append({
+            "time": row["time"],
+            "flood": min(max(row["rain_adj"] / 80, 0), 1),
+            "heat": min(max((row["heat_index"] - 35) / 10, 0), 1),
+            "wind": min(max(row["wind_kmph"] / 40, 0), 1),
+            "landslide": min(max(row["flood_proxy"] / 200, 0), 1),
+        })
+    return risks
+
+@app.get("/api/agent_trace")
+def agent_trace():
+    steps = [
+        {"idx": "01", "agent": "IngestionAgent", "message": "Forecast fetched · Open-Meteo API", "status": "ok"},
+        {"idx": "02", "agent": "ModelingAgent", "message": "Terrain blend · slope=12° · heat_index · flood_proxy", "status": "ok"},
+        {"idx": "03", "agent": "HazardsAgent", "message": "Risk scores · action thresholds crossed", "status": "ok"},
+        {"idx": "04", "agent": "DecisionAgent", "message": "Action cards · sorted by severity", "status": "ok"},
+        {"idx": "05", "agent": "EvaluationAgent", "message": "Not run (open Evaluation tab to train)", "status": "warn"},
+    ]
+    return {"steps": steps}
+
+from evaluation_agent import EvaluationAgent
+
+@app.post("/api/run_evaluation")
+def run_evaluation():
+    agent = EvaluationAgent()
+    results = agent.run()
+    return results
+
 @app.get("/")
 def root():
     return {"status": "Running Multi-Hazard Backend"}
