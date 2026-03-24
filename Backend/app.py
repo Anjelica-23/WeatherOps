@@ -119,7 +119,7 @@ app = FastAPI(title="WeatherOps API", version="4.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173","http://127.0.0.1:5173","http://localhost",],
+    allow_origins=["http://localhost:5173","http://127.0.0.1:5173","http://localhost","https://weather-3hyx75y17-anjelica-23s-projects.vercel.app","https://*.vercel.app",],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
