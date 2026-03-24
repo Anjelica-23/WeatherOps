@@ -60,6 +60,6 @@ export async function fetchROIBoundary() {
 }
 
 export const fetchDehradunBlocks = async () => {
-  const res = await fetch("http://localhost:8000/api/dehradun_blocks")
+  const res = await fetch("https://weatherops-backend.onrender.com/api/dehradun_blocks")
   return res.json()
 }
