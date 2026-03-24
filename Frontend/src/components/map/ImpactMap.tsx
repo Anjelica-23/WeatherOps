@@ -118,22 +118,18 @@ export default function ImpactMap({
   function buildBlockTooltip(name: string): string {
     const risk = blockRisk[name];
 
-    const hazardRows = risk
+    const hazardRows = risk && Object.keys(risk).length > 0 
       ? Object.entries(risk)
           .map(([hz, val]: [string, any]) => {
             const emoji = HAZARD_EMOJI[hz.toUpperCase()] ?? "⚠️";
-            const level: string =
-              typeof val === "object" ? val?.level ?? val?.severity ?? JSON.stringify(val) : String(val);
+            const score: number =
+              typeof val === "object" ? val?.score ?? val?.risk_score ?? 0 : Number(val);
             const color =
-              level.toLowerCase() === "high"
-                ? "#ff2244"
-                : level.toLowerCase() === "medium"
-                ? "#ffcc00"
-                : "#00e676";
+              score >= 70 ? "#ff2244" : score >= 40 ? "#ffcc00" : "#00e676"
             return `
               <div style="display:flex;justify-content:space-between;gap:12px;margin-top:3px">
                 <span>${emoji} ${hz}</span>
-                <strong style="color:${color}">${level.toUpperCase()}</strong>
+                <strong style="color:${color}">${score}</strong>
               </div>`;
           })
           .join("")

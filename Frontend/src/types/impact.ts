@@ -26,9 +26,8 @@ export interface ActionDecision {
   }[];
 }
 
-
 export interface AgentDecisionOutput {
-  generatedAt: string;
-  roi: string;
   actions: ActionDecision[];
+  risk?: Record<string, number>;
+  risk_ci?: Record<string, [number, number]>;
 }

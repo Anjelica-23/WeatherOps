@@ -1,124 +1,639 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-
 import ImpactMap from "../components/map/ImpactMap";
 import ActionCard from "../components/cards/ActionCard";
-import { fetchDecisions, downloadReport, fetchMetrics } from "../services/api";
+import {
+  fetchDecisions,
+  downloadReport,
+  fetchMetrics,
+} from "../services/api";
 import type { ActionDecision } from "../types/impact";
 import MetricCard from "../components/cards/MetricCard";
+import BlockRiskGrid from "../components/BlockRiskGrid";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+} from "chart.js";
+import { Line } from "react-chartjs-2";
+
+// Register ChartJS components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type HazardType = "ALL" | "FLOOD" | "HEAT" | "WIND" | "LANDSLIDE";
 type SeverityFilter = "all" | "high" | "medium" | "low";
+type Tab =
+  | "RECOMMENDATIONS"
+  | "FORECAST TIMESERIES"
+  | "RAW DATA"
+  | "EVALUATION AGENT"
+  | "AGENT TRACE";
+
+// Data structures from Python backend
+interface ForecastPoint {
+  time: string;
+  rain_mm: number;
+  rain_adj: number;
+  temp_c: number;
+  wind_kmph: number;
+  heat_index: number;
+  flood_proxy: number;
+  app_temp: number;
+}
+
+interface RiskEvolution {
+  time: string[];
+  flood: number[];
+  heat: number[];
+  wind: number[];
+  landslide: number[];
+}
+
+interface SeasonalContext {
+  month: number;
+  season: string;
+  color: string;
+  summary: string;
+  hazards: {
+    Flood: string;
+    Heat: string;
+    Wind: string;
+    Landslide: string;
+  };
+  callout: string;
+}
+
+interface Recommendation {
+  id: string;
+  hazard: string;
+  level: "critical" | "high" | "moderate" | "low";
+  title: string;
+  body: string;
+  actions: string[];
+  preventiveActions: string[];
+  forecastBasis: string;
+  confidence: [number, number];
+}
+
+interface EvaluationResult {
+  hazard: string;
+  display: string;
+  task: "clf" | "reg";
+  n_train: number;
+  n_test: number;
+  best_model: string;
+  models: Record<string, any>;
+  features: string[];
+  roc_data?: { fpr: number[]; tpr: number[]; auc: number };
+}
+
+interface AgentStep {
+  idx: string;
+  agent: string;
+  message: string;
+  status: "ok" | "warn" | "err";
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const API_BASE = "https://weatherops-production.up.railway.app";
 
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
-function sortBySeverity(actions: ActionDecision[]): ActionDecision[] {
-  return [...actions].sort((a, b) => {
-    const sA = a.locations[0]?.severity ?? "low";
-    const sB = b.locations[0]?.severity ?? "low";
-    return SEVERITY_ORDER[sA] - SEVERITY_ORDER[sB];
-  });
-}
+const SEASONAL_RISKS: Record<number, SeasonalContext> = {
+  1: {
+    month: 1,
+    season: "Winter",
+    color: "#00c9a7",
+    summary: "Mid-winter — lowest annual hazard period. Monitor western disturbances for cold wave risk.",
+    hazards: { Flood: "LOW", Heat: "LOW", Wind: "LOW", Landslide: "LOW" },
+    callout: "",
+  },
+  2: {
+    month: 2,
+    season: "Late Winter",
+    color: "#00c9a7",
+    summary: "Late winter — western disturbances bring pre-season winds. Snowmelt begins on high ridges.",
+    hazards: { Flood: "LOW", Heat: "LOW", Wind: "MODERATE", Landslide: "LOW" },
+    callout: "",
+  },
+  3: {
+    month: 3,
+    season: "Pre-Summer",
+    color: "#f0a500",
+    summary: "Pre-summer — temperatures rising fast. Heat risk building in urban core (Paltan Bazaar, Dalanwala).",
+    hazards: { Flood: "LOW", Heat: "MODERATE", Wind: "MODERATE", Landslide: "LOW" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
+  },
+  4: {
+    month: 4,
+    season: "Summer",
+    color: "#f06830",
+    summary: "Summer peak — urban heat island in full effect. Doiwala, Raiwala, and Rishikesh face max thermal load.",
+    hazards: { Flood: "LOW", Heat: "HIGH", Wind: "MODERATE", Landslide: "LOW" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
+  },
+  5: {
+    month: 5,
+    season: "Pre-Monsoon",
+    color: "#f06830",
+    summary: "Pre-monsoon — peak heat with thunderstorm risk. Isolated hailstorms possible in Vikasnagar belt.",
+    hazards: { Flood: "LOW", Heat: "HIGH", Wind: "MODERATE", Landslide: "LOW" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
+  },
+  6: {
+    month: 6,
+    season: "Early Monsoon",
+    color: "#60a5fa",
+    summary: "Monsoon onset — Rispana & Bindal rivers begin rising. Pre-position flood response teams.",
+    hazards: { Flood: "HIGH", Heat: "MODERATE", Wind: "MODERATE", Landslide: "HIGH" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+  },
+  7: {
+    month: 7,
+    season: "Peak Monsoon",
+    color: "#e84040",
+    summary: "Peak monsoon — highest flood & landslide risk. NH-707 closures likely. Full EOC activation.",
+    hazards: { Flood: "CRITICAL", Heat: "LOW", Wind: "HIGH", Landslide: "CRITICAL" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+  },
+  8: {
+    month: 8,
+    season: "Peak Monsoon",
+    color: "#e84040",
+    summary: "Sustained monsoon — cumulative soil saturation maximises landslide probability on slopes >25°.",
+    hazards: { Flood: "CRITICAL", Heat: "LOW", Wind: "MODERATE", Landslide: "HIGH" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+  },
+  9: {
+    month: 9,
+    season: "Retreating Monsoon",
+    color: "#f06830",
+    summary: "Retreating monsoon — residual flood risk. Inspect and repair road damage from peak months.",
+    hazards: { Flood: "HIGH", Heat: "LOW", Wind: "LOW", Landslide: "MODERATE" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+  },
+  10: {
+    month: 10,
+    season: "Post-Monsoon",
+    color: "#f0a500",
+    summary: "Post-monsoon — reduced hazards. Focus on infrastructure repair and slope stabilisation.",
+    hazards: { Flood: "MODERATE", Heat: "LOW", Wind: "LOW", Landslide: "LOW" },
+    callout: "",
+  },
+  11: {
+    month: 11,
+    season: "Early Winter",
+    color: "#00c9a7",
+    summary: "Winter onset — low hazard across all categories. Fog advisories for Jolly Grant Airport.",
+    hazards: { Flood: "LOW", Heat: "LOW", Wind: "LOW", Landslide: "LOW" },
+    callout: "",
+  },
+  12: {
+    month: 12,
+    season: "Winter",
+    color: "#00c9a7",
+    summary: "Winter — minimal risk. Snowfall possible at Chakrata and Mussoorie elevations above 1800m.",
+    hazards: { Flood: "LOW", Heat: "LOW", Wind: "LOW", Landslide: "LOW" },
+    callout: "",
+  },
+};
 
-function HazardScoreBar({
-  label,
-  score,
-  ci,
-  color,
-}: {
-  label: string;
-  score: number;
-  ci: [number, number];
-  color: string;
-}) {
-  return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3">
-      <div className="flex justify-between items-center mb-1">
-        <span className="text-xs text-zinc-400 uppercase tracking-wide font-medium">{label}</span>
-        <span className="text-sm font-bold" style={{ color }}>{score.toFixed(1)}%</span>
-      </div>
-      <div className="h-1.5 bg-zinc-700 rounded-full relative overflow-hidden">
-        <div
-          className="absolute top-0 bottom-0 rounded-full opacity-80"
-          style={{ left: `${ci[0]}%`, width: `${ci[1] - ci[0]}%`, background: color }}
-        />
-        <div
-          className="absolute top-0 bottom-0 w-0.5 rounded-full"
-          style={{ left: `${score}%`, background: color }}
-        />
-      </div>
-      <div className="text-zinc-600 text-xs mt-1">CI: {ci[0]}–{ci[1]}%</div>
-    </div>
+// Preventive actions per hazard and level (matching Python PREVENTIVE_ACTIONS)
+const PREVENTIVE_ACTIONS: Record<string, Record<string, string[]>> = {
+  Flood: {
+    critical: [
+      "Evacuate all residents from flood-prone zones — Prem Nagar, Niranjanpur, Doiwala, Raiwala",
+      "Close all river crossings: Rispana (Patel Nagar), Bindal (Ladpur), Song (Doiwala)",
+      "Activate Dehradun District EOC to Level 3; request NDRF deployment from Roorkee",
+      "Issue emergency alert via NDMA App, SMS broadcast, and DD Uttarakhand",
+      "Pre-position rescue boats at ISBT, Dehradun Railway Station, and Doiwala junction",
+    ],
+    high: [
+      "Alert drainage & pumping crews for all low-lying wards",
+      "Close Rispana bridge (Patel Nagar) if water level exceeds 1.5m gauge",
+      "Deploy traffic police at flood-prone underpasses on Rajpur Road",
+      "Open emergency shelters at Government Inter-Colleges in Raipur and Doiwala blocks",
+      "Monitor Dakpathar and Premnagar Barrage discharge on hourly cycle",
+    ],
+    moderate: [
+      "Issue advisory for low-lying residents near Rispana & Bindal river corridors",
+      "Place sandbags at known flood entry points in Prem Nagar and Niranjanpur wards",
+      "Alert municipal drainage teams — inspect and clear blocked drains before rain peak",
+      "Coordinate with UPCL for transformer protection in flood-risk zones",
+    ],
+  },
+  Heat: {
+    critical: [
+      "Declare Heat Emergency — open all government buildings as 24h cooling centres",
+      "Issue mandatory work-from-home for non-essential outdoor workers in Raipur & Doiwala blocks",
+      "Deploy mobile medical teams to Doiwala, Raiwala, Rishikesh, and Haridwar border zone",
+      "Increase ambulance fleet standby at AIIMS Rishikesh by 50% during peak hours",
+      "Distribute ORS packets via Anganwadi network in vulnerable urban and peri-urban blocks",
+    ],
+    high: [
+      "Open cooling centres at Clock Tower, FRI Campus, Rajpur Road parks, and Selaqui",
+      "Halt outdoor construction and road work 11:00–17:00 IST on all active sites",
+      "Issue heat advisory via All India Radio Dehradun, local cable TV, and WhatsApp groups",
+      "Activate early-dismissal protocol for schools in Doiwala and Raipur blocks",
+      "Increase water tanker frequency in Paltan Bazaar, Dalanwala, and ISBT zone",
+    ],
+    moderate: [
+      "Issue advisory for elderly and outdoor workers in Paltan Bazaar & Dalanwala",
+      "Place drinking water kiosks at high-footfall locations: ISBT, Railway Station, FRI Gate",
+      "Alert construction site supervisors to enforce mandatory shade breaks every 2 hours",
+    ],
+  },
+  Wind: {
+    critical: [
+      "Ground all helicopter and small aircraft operations at Jolly Grant Airport immediately",
+      "Evacuate temporary structures and scaffolding on Mussoorie Road and Kempty Road corridor",
+      "Issue emergency advisory for Chakrata plateau and Mussoorie ridge settlements",
+      "Pre-position UPCL rapid-response linemen crews at all ridge substations above 1500m",
+      "Close Kempty Falls and Sahastradhara tourist areas until sustained winds drop below 40 km/h",
+    ],
+    high: [
+      "Notify Jolly Grant ATC — gusts exceeding safe operational thresholds forecast",
+      "Issue falling-tree advisory for Rajpur Road and FRI campus canopy corridor",
+      "Secure loose billboards, hoardings, and construction material at Selaqui Industrial Area",
+      "Alert UPCL linemen for Chakrata–Mussoorie transmission line patrol and pre-fault inspection",
+      "Restrict vehicular movement on Mussoorie Road above Kimberley Point for heavy vehicles",
+    ],
+    moderate: [
+      "Alert fire stations along Mussoorie Road ridge corridor for ember-spread risk",
+      "Inspect and secure power line infrastructure at elevation above 1500m",
+      "Issue caution advisory for two-wheelers and cyclists on exposed ridge roads",
+    ],
+  },
+  Landslide: {
+    critical: [
+      "Immediately close NH-707 Kalsi–Chakrata stretch to all traffic; deploy police pickets",
+      "Evacuate settlements within 200m of slopes >35° in Tyuni–Tons Valley and Benog Tibba",
+      "Deploy SDRF teams to Sahastradhara, Maldevta, Barlowganj, and Benog Tibba zones",
+      "Activate geo-monitoring alert level at all installed sensors in Mussoorie–Landour",
+      "Issue press advisory: avoid Mussoorie Road, Kempty Road, Chakrata Road during rain",
+    ],
+    high: [
+      "Inspect NH-707 Kalsi–Chakrata section; close if debris accumulation or cracking found",
+      "Alert Sahastradhara zone residents and tourism operators — active historical slide location",
+      "Pre-brief SDRF units at Chakrata and Vikasnagar block HQs for rapid 2-hour deployment",
+      "Close Mussoorie Road Kimberley section if sustained rainfall exceeds 30mm/6h",
+      "Deploy additional geo-monitoring sensors at Maldevta and Sahastradhara priority sites",
+    ],
+    moderate: [
+      "Issue seasonal landslide advisory for Mussoorie–Landour and Chakrata tourist areas",
+      "Request PWD inspection of retaining walls and culverts on Chakrata Road and NH-707",
+      "Alert block development officers in Chakrata and Kalsi blocks for community-level inspection",
+    ],
+  },
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function sortBySeverity(actions: ActionDecision[]): ActionDecision[] {
+  return [...actions].sort(
+    (a, b) =>
+      (SEVERITY_ORDER[a.locations[0]?.severity ?? "low"] ?? 2) -
+      (SEVERITY_ORDER[b.locations[0]?.severity ?? "low"] ?? 2)
   );
 }
 
-export default function Dashboard() {
-  const [actions, setActions]                   = useState<ActionDecision[]>([]);
-  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
-  const [hazard, setHazard]                     = useState<HazardType>("ALL");
-  const [severityFilter, setSeverityFilter]     = useState<SeverityFilter>("all");
-  const [loading, setLoading]                   = useState(true);
-  const [downloading, setDownloading]           = useState(false);
-  const [backendStatus, setBackendStatus]       = useState<"online" | "offline">("offline");
-  const [metrics, setMetrics]                   = useState<any>(null);
-  const [lastUpdated, setLastUpdated] = useState<string>("--");
-  const [isRefreshing, setIsRefreshing] = useState(false);
+function getLevel(val: number): string {
+  if (val >= 0.75) return "CRITICAL";
+  if (val >= 0.5) return "HIGH";
+  if (val >= 0.25) return "MODERATE";
+  return "LOW";
+}
 
-  const loadDecisions = async () => {
+function getRiskColor(score: number): string {
+  if (score >= 0.75) return "#e84040";
+  if (score >= 0.5) return "#f06830";
+  if (score >= 0.25) return "#f0a500";
+  return "#00c9a7";
+}
+
+function buildRecommendations(
+  forecast: ForecastPoint[],
+  risk: Record<string, number>,
+  riskCi: Record<string, [number, number]>,
+  horizon: number
+): Recommendation[] {
+  const recs: Recommendation[] = [];
+
+  // Compute peak windows (similar to Python's _peak_window)
+  const times = forecast.map((p) => new Date(p.time));
+  const now = new Date();
+
+  const getPeakWindow = (values: number[]) => {
+    const maxIdx = values.reduce((iMax, x, i, arr) => (x > arr[iMax] ? i : iMax), 0);
+    const peak = values[maxIdx];
+    const peakTime = times[maxIdx];
+    const hours = Math.floor((peakTime.getTime() - now.getTime()) / 3600000);
+    const when = hours > 2 ? `in ~${hours}h` : "within 2h";
+    return { peak, when };
+  };
+
+  const rainPeak = getPeakWindow(forecast.map((p) => p.rain_adj));
+  const tempPeak = getPeakWindow(forecast.map((p) => p.heat_index));
+  const windPeak = getPeakWindow(forecast.map((p) => p.wind_kmph));
+  const floodPeak = getPeakWindow(forecast.map((p) => p.flood_proxy));
+
+  const rain24h = forecast.slice(0, 24).reduce((sum, p) => sum + p.rain_adj, 0);
+  const tempHrsAbove35 = forecast.filter((p) => p.heat_index > 35).length;
+  const tempHrsAbove40 = forecast.filter((p) => p.heat_index > 40).length;
+  const windGustsAbove50 = forecast.filter((p) => p.wind_kmph > 50).length;
+  let consecRain = 0;
+  let cur = 0;
+  for (const p of forecast) {
+    if (p.rain_adj > 2.0) {
+      cur++;
+      consecRain = Math.max(consecRain, cur);
+    } else {
+      cur = 0;
+    }
+  }
+
+  // Flood
+  if (risk.Flood >= 0.25) {
+    const level = risk.Flood >= 0.75 ? "critical" : risk.Flood >= 0.5 ? "high" : "moderate";
+    recs.push({
+      id: "FL-01",
+      hazard: "Flood",
+      level,
+      title: "Activate Flood Early Warning Protocol",
+      body: `Rainfall forecast peaks at <b>${rainPeak.peak.toFixed(1)} mm/hr</b> ${rainPeak.when}. Cumulative 24h: <b>${rain24h.toFixed(0)} mm</b>. Flood proxy: <b>${floodPeak.peak.toFixed(0)} mm</b>.`,
+      actions: [
+        "Alert drainage crews for Prem Nagar & Niranjanpur",
+        `Monitor Rispana/Bindal levels every 2h (${rainPeak.when})`,
+        "Pre-position rescue boats at ISBT and Railway Station",
+      ],
+      preventiveActions: PREVENTIVE_ACTIONS.Flood[level] || [],
+      forecastBasis: `Rain peak ${rainPeak.peak.toFixed(1)} mm/hr · 24h ${rain24h.toFixed(0)} mm · proxy ${floodPeak.peak.toFixed(0)} mm`,
+      confidence: riskCi.Flood || [0, 1],
+    });
+  }
+
+  // Heat
+  if (risk.Heat >= 0.25) {
+    const level = risk.Heat >= 0.75 ? "critical" : risk.Heat >= 0.5 ? "high" : "moderate";
+    recs.push({
+      id: "HT-01",
+      hazard: "Heat",
+      level,
+      title: "Heat Health Advisory — Urban Core",
+      body: `Heat index peaks at <b>${tempPeak.peak.toFixed(1)}°C</b> ${tempPeak.when}. <b>${tempHrsAbove35}h</b> above 35°C; <b>${tempHrsAbove40}h</b> above 40°C.`,
+      actions: [
+        `Open cooling centres at Clock Tower & FRI campus (${tempPeak.when})`,
+        "Issue IMD heat wave advisory via Dehradun All India Radio",
+        "Halt outdoor construction & road work 11:00–17:00 IST",
+      ],
+      preventiveActions: PREVENTIVE_ACTIONS.Heat[level] || [],
+      forecastBasis: `HI peak ${tempPeak.peak.toFixed(1)}°C · >35°C: ${tempHrsAbove35}h · >40°C: ${tempHrsAbove40}h`,
+      confidence: riskCi.Heat || [0, 1],
+    });
+  }
+
+  // Wind
+  if (risk.Wind >= 0.25) {
+    const level = risk.Wind >= 0.75 ? "critical" : risk.Wind >= 0.5 ? "high" : "moderate";
+    recs.push({
+      id: "WD-01",
+      hazard: "Wind",
+      level,
+      title: "Ridge & Airport Wind Operations Advisory",
+      body: `Wind peaks at <b>${windPeak.peak.toFixed(1)} km/h</b> ${windPeak.when}. <b>${windGustsAbove50}h</b> forecast above 50 km/h.`,
+      actions: [
+        `Notify Jolly Grant ATC: gusts ${windPeak.peak.toFixed(0)} km/h ${windPeak.when}`,
+        "Secure infrastructure on Mussoorie Road corridor",
+        "Issue falling-tree advisory for Rajpur Road",
+      ],
+      preventiveActions: PREVENTIVE_ACTIONS.Wind[level] || [],
+      forecastBasis: `Wind peak ${windPeak.peak.toFixed(1)} km/h · >50 km/h: ${windGustsAbove50}h`,
+      confidence: riskCi.Wind || [0, 1],
+    });
+  }
+
+  // Landslide
+  if (risk.Landslide >= 0.25) {
+    const level = risk.Landslide >= 0.75 ? "critical" : risk.Landslide >= 0.5 ? "high" : "moderate";
+    recs.push({
+      id: "LS-01",
+      hazard: "Landslide",
+      level,
+      title: "Landslide-Prone Corridor Inspection",
+      body: `Flood proxy <b>${floodPeak.peak.toFixed(0)} mm</b> and ${consecRain}h sustained rainfall saturate slopes. NH-707 and Mussoorie Road (Kimberley, slope >30°) priority.`,
+      actions: [
+        "Dispatch teams to NH-707 Kalsi–Chakrata stretch",
+        "Close Mussoorie Road Kimberley if rain >30mm/6h",
+        "Alert Sahastradhara zone residents",
+      ],
+      preventiveActions: PREVENTIVE_ACTIONS.Landslide[level] || [],
+      forecastBasis: `Proxy ${floodPeak.peak.toFixed(0)} mm · consec rain ${consecRain}h · LS ${(risk.Landslide * 100).toFixed(0)}%`,
+      confidence: riskCi.Landslide || [0, 1],
+    });
+  }
+
+  // Multi-hazard if 3+ active
+  const activeHazards = Object.entries(risk)
+    .filter(([_, score]) => score >= 0.25)
+    .map(([h]) => h);
+  if (activeHazards.length >= 3) {
+    recs.push({
+      id: "MH-01",
+      hazard: "Multi-Hazard",
+      level: "high",
+      title: "Compound Event — Coordinated EOC Activation",
+      body: `<b>${activeHazards.length} simultaneous hazards</b> above threshold: ${activeHazards.join(", ")}.`,
+      actions: [
+        "Activate Dehradun District EOC to Level 2",
+        "Coordinate SDRF across Chakrata, Doiwala, and Rishikesh tehsils",
+        "Issue unified advisory via NDMA App & DD News",
+      ],
+      preventiveActions: [],
+      forecastBasis: `Active: ${activeHazards.join(", ")} · horizon: ${horizon}h`,
+      confidence: [0.45, 0.75],
+    });
+  }
+
+  // Sort by severity
+  const levelOrder: Record<string, number> = { critical: 0, high: 1, moderate: 2, low: 3 };
+  recs.sort((a, b) => levelOrder[a.level] - levelOrder[b.level]);
+  return recs;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  // ── Tab ──────────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<Tab>("RECOMMENDATIONS");
+
+  // ── Actions / Filters ────────────────────────────────────────────────────
+  const [actions, setActions] = useState<ActionDecision[]>([]);
+  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
+  const [hazard, setHazard] = useState<HazardType>("ALL");
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
+
+  // ── Thresholds ───────────────────────────────────────────────────────────
+  const [forecastHours, setForecastHours] = useState(72);
+  const [rainThreshold, setRainThreshold] = useState(80);
+  const [heatThreshold, setHeatThreshold] = useState(35);
+  const [windThreshold, setWindThreshold] = useState(40);
+
+  // ── UI State ─────────────────────────────────────────────────────────────
+  const [loading, setLoading] = useState(true);
+  const [downloading, setDownloading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<"online" | "offline">("offline");
+  const [evaluating, setEvaluating] = useState(false);
+
+  // ── Data ─────────────────────────────────────────────────────────────────
+  const [metrics, setMetrics] = useState<any>(null);
+  const [lastUpdated, setLastUpdated] = useState<string>("--");
+  const [blockRisk, setBlockRisk] = useState<Record<string, any>>({});
+  const [forecastData, setForecastData] = useState<ForecastPoint[]>([]);
+  const [riskEvolution, setRiskEvolution] = useState<RiskEvolution>({
+    time: [],
+    flood: [],
+    heat: [],
+    wind: [],
+    landslide: [],
+  });
+  const [evaluationResults, setEvaluationResults] = useState<EvaluationResult[]>([]);
+  const [agentTrace, setAgentTrace] = useState<AgentStep[]>([]);
+  const [seasonalContext, setSeasonalContext] = useState<SeasonalContext>(SEASONAL_RISKS[new Date().getMonth() + 1]);
+  const [riskScores, setRiskScores] = useState<Record<string, number>>({ Flood: 0, Heat: 0, Wind: 0, Landslide: 0 });
+  const [riskCIs, setRiskCIs] = useState<Record<string, [number, number]>>({
+    Flood: [0, 0],
+    Heat: [0, 0],
+    Wind: [0, 0],
+    Landslide: [0, 0],
+  });
+
+  // ── Data Fetching ─────────────────────────────────────────────────────────
+
+  const loadAllData = async () => {
+    setIsRefreshing(true);
     try {
-      const data = await fetchDecisions();
-      setActions(data.actions || []);
+      const [metricsRes, decisionsRes, lastUpdatedRes, blockRiskRes, forecastRes, riskEvolRes, traceRes] =
+        await Promise.all([
+          fetchMetrics(),
+          fetchDecisions({
+            forecast_hours: forecastHours,
+            rain_thresh: rainThreshold,
+            temp_thresh: heatThreshold,
+            wind_thresh: windThreshold,
+          }),
+          axios.get(`${API_BASE}/api/last_updated`),
+          axios.get(`${API_BASE}/api/block_risk`),
+          axios.get(`${API_BASE}/api/forecast`),
+          axios.get(`${API_BASE}/api/risk_evolution`),
+          axios.get(`${API_BASE}/api/agent_trace`),
+        ]);
+
+      setMetrics(metricsRes);
+      setActions(decisionsRes.actions || []);
+      setLastUpdated(lastUpdatedRes.data.last_updated || "--");
+      setBlockRisk(blockRiskRes.data);
+      setForecastData(forecastRes.data.forecast || []);
+      setRiskEvolution(riskEvolRes.data);
+      setAgentTrace(traceRes.data.steps || []);
+
+      // Extract risk scores and CIs from decisions response if available
+      if (decisionsRes.risk) {
+        setRiskScores(decisionsRes.risk);
+      }
+      if (decisionsRes.risk_ci) {
+        setRiskCIs(decisionsRes.risk_ci);
+      }
+
       setBackendStatus("online");
-    } catch (error) {
-      console.error("Failed to fetch decisions:", error);
+    } catch (err) {
+      console.error(err);
       setBackendStatus("offline");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadMetrics = async () => {
-    try {
-      const m = await fetchMetrics();
-      setMetrics(m);
-    } catch (err) {
-      console.error("Metrics load failed:", err);
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
-    const loadAll = async () => {
-      setIsRefreshing(true); 
-      await Promise.all([
-        loadMetrics(),
-        loadDecisions(),
-        loadLastUpdated()
-        ]);
-        setIsRefreshing(false);
-        };
-        loadAll();
-        const interval = setInterval(loadAll, 30000);
-        return () => clearInterval(interval);
-        }, []);
-  
-  const loadLastUpdated = async () => {
-  try {
-    const res = await axios.get(`${API_BASE}/api/last_updated`);
-    setLastUpdated(res.data.last_updated);
-  } catch (err) {
-    console.error("Failed to fetch last updated:", err);
-  }
-};
+    loadAllData();
+    const interval = setInterval(loadAllData, 30000);
+    return () => clearInterval(interval);
+  }, [forecastHours, rainThreshold, heatThreshold, windThreshold]);
 
-  // ── Filter by hazard type ─────────────────────────────────────
+  // Update seasonal context on month change
+  useEffect(() => {
+    const month = new Date().getMonth() + 1;
+    setSeasonalContext(SEASONAL_RISKS[month] || SEASONAL_RISKS[3]);
+  }, []);
+
+  // ── Evaluation Runner ──────────────────────────────────────────────────────
+
+  const runEvaluation = async () => {
+    setEvaluating(true);
+    try {
+      const res = await axios.post(`${API_BASE}/api/run_evaluation`);
+      setEvaluationResults(res.data.results || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setEvaluating(false);
+    }
+  };
+
+  // ── Download Handler ──────────────────────────────────────────────────────
+
+  const handleDownload = async () => {
+    try {
+      setDownloading(true);
+      const blob = await downloadReport();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "WeatherOps_Report.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  // ── Derived Data ──────────────────────────────────────────────────────────
+
   const filteredActions =
     hazard === "ALL"
       ? actions
       : actions.filter((a) => a.hazard?.toUpperCase() === hazard);
 
-  // ── Further filter by severity for action cards ───────────────
   const severityFiltered =
     severityFilter === "all"
       ? filteredActions
@@ -126,201 +641,383 @@ export default function Dashboard() {
           (a) => a.locations[0]?.severity === severityFilter
         );
 
-  const sorted        = sortBySeverity(severityFiltered);
-  const highActions   = sortBySeverity(filteredActions).filter((a) => a.locations[0]?.severity === "high").slice(0, 15);
-  const mediumActions = sortBySeverity(filteredActions).filter((a) => a.locations[0]?.severity === "medium").slice(0, 15);
-  const lowActions    = sortBySeverity(filteredActions).filter((a) => a.locations[0]?.severity === "low").slice(0, 10);
-  const sortedActions = sorted.slice(0, 40);
+  const sortedActions = sortBySeverity(severityFiltered).slice(0, 40);
 
-  const handleDownload = async () => {
-    try {
-      setDownloading(true);
-      const blob = await downloadReport();
-      const url  = window.URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href     = url;
-      a.download = "WeatherOps_Report.pdf";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("Download failed:", err);
-    } finally {
-      setDownloading(false);
-    }
+  const highActions = sortBySeverity(filteredActions)
+    .filter((a) => a.locations[0]?.severity === "high")
+    .slice(0, 15);
+
+  const mediumActions = sortBySeverity(filteredActions)
+    .filter((a) => a.locations[0]?.severity === "medium")
+    .slice(0, 15);
+
+  const lowActions = sortBySeverity(filteredActions)
+    .filter((a) => a.locations[0]?.severity === "low")
+    .slice(0, 10);
+
+  const blockRiskData = Object.keys(blockRisk || {}).map((name) => ({
+    name,
+    flood: getLevel(blockRisk[name]?.flood || 0),
+    heat: getLevel(blockRisk[name]?.heat || 0),
+    wind: getLevel(blockRisk[name]?.wind || 0),
+    landslide: getLevel(blockRisk[name]?.landslide || 0),
+  }));
+
+  // Build recommendations from forecast and risk
+  const recommendations = buildRecommendations(forecastData, riskScores, riskCIs, forecastHours);
+const computePeak = (values: number[]) => {
+  if (!values || values.length === 0) return { peak: 0 };
+  return { peak: Math.max(...values) };
+};
+
+const rainPeak = computePeak(forecastData.map(p => p.rain_adj));
+const tempPeak = computePeak(forecastData.map(p => p.heat_index));
+const windPeak = computePeak(forecastData.map(p => p.wind_kmph));
+const floodPeak = computePeak(forecastData.map(p => p.flood_proxy));
+
+  // Prepare chart data for timeseries
+  const timeseriesLabels = forecastData.map((p) => new Date(p.time).toLocaleString());
+  const timeseriesData = {
+    labels: timeseriesLabels,
+    datasets: [
+      {
+        label: "Rain (mm/hr)",
+        data: forecastData.map((p) => p.rain_adj),
+        borderColor: "#00c9a7",
+        backgroundColor: "rgba(0,201,167,0.1)",
+        fill: true,
+        tension: 0.4,
+        yAxisID: "y-rain",
+      },
+      {
+        label: "Temp (°C)",
+        data: forecastData.map((p) => p.temp_c),
+        borderColor: "#f0a500",
+        backgroundColor: "transparent",
+        borderDash: [5, 5],
+        tension: 0.4,
+        yAxisID: "y-temp",
+      },
+      {
+        label: "Wind (km/h)",
+        data: forecastData.map((p) => p.wind_kmph),
+        borderColor: "#a78bfa",
+        backgroundColor: "rgba(167,139,250,0.1)",
+        fill: true,
+        tension: 0.4,
+        yAxisID: "y-wind",
+      },
+    ],
   };
 
-  const formatTime = (timeStr: string) => {
+  const riskEvolutionData = {
+    labels: riskEvolution.time.map((t) => new Date(t).toLocaleString()),
+    datasets: [
+      {
+        label: "Flood Risk",
+        data: riskEvolution.flood,
+        borderColor: "#00c9a7",
+        backgroundColor: "rgba(0,201,167,0.1)",
+        fill: true,
+        tension: 0.4,
+      },
+      {
+        label: "Heat Risk",
+        data: riskEvolution.heat,
+        borderColor: "#e84040",
+        backgroundColor: "rgba(232,64,64,0.1)",
+        fill: true,
+        tension: 0.4,
+      },
+      {
+        label: "Wind Risk",
+        data: riskEvolution.wind,
+        borderColor: "#f0a500",
+        backgroundColor: "rgba(240,165,0,0.1)",
+        fill: true,
+        tension: 0.4,
+      },
+      {
+        label: "Landslide Risk",
+        data: riskEvolution.landslide,
+        borderColor: "#a78bfa",
+        backgroundColor: "rgba(167,139,250,0.1)",
+        fill: true,
+        tension: 0.4,
+      },
+    ],
+  };
+  if (loading) {
+  return (
+    <div className="h-screen flex items-center justify-center bg-black text-white">
+      Loading dashboard...
+    </div>
+  );
+}
 
-   if (!timeStr || timeStr === "Not available") return "--";
-   const date = new Date(timeStr);
-   if (isNaN(date.getTime())) return "--";
-   return date.toLocaleTimeString();
- };
-
-  const hazardScores = metrics?.hazard_scores ?? null;
-  const hazardCI     = metrics?.hazard_ci     ?? null;
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-screen bg-black text-white overflow-hidden flex flex-col">
+    <div className="h-screen bg-black text-white overflow-hidden flex flex-col font-sans">
 
-      {/* ── Top status bar ── */}
-      <div className="flex justify-between items-center px-6 py-2 bg-zinc-900 border-b border-zinc-800 text-sm shrink-0">
-        <div className="font-semibold tracking-wide">WeatherOps GeoAI Dashboard</div>
-        <div className="flex items-center gap-4 text-xs text-zinc-400">
-          <span>Now: {new Date().toLocaleTimeString()}</span>
-          {isRefreshing ? (
-            <span className="flex items-center gap-1 text-yellow-400">
-              <span className="animate-spin">🔄</span>
+      {/* ── Header ── */}
+      <header className="bg-[#111318] border-b border-[#2a2f3d] px-6 py-3 flex items-center justify-between">
+        <span className="text-emerald-400 flex items-center gap-1">
+          <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+          System {backendStatus === "online" ? "Online" : "Offline"}
+          </span>
+
+          {isRefreshing && (
+            <span className="text-xs text-amber-400 animate-pulse">
               Refreshing...
               </span>
-            ) : (
-              <span className="text-zinc-400">
-                Last Updated: {formatTime(lastUpdated)}
-              </span>
               )}
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">⛈️</span>
+          <span className="text-2xl font-bold">WeatherOps</span>
+        </div>
 
-          {backendStatus === "online" ? (
-            <span className="text-green-400 flex items-center gap-1">
-              <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-              Backend Connected
-            </span>
-          ) : (
-            <span className="text-red-400 flex items-center gap-1">
-              <span className="w-2 h-2 bg-red-400 rounded-full" />
-              Backend Offline
-            </span>
-          )}
+        <div className="flex items-center gap-6">
+          <button className="bg-blue-600 px-6 py-1.5 rounded-full text-sm font-medium">
+            Dashboard
+          </button>
+          <button className="text-zinc-400 hover:text-white text-sm font-medium">
+            Reports
+          </button>
+          <button className="text-zinc-400 hover:text-white text-sm font-medium">
+            About
+          </button>
+        </div>
+
+        <div className="flex items-center gap-6 text-sm">
+          <span className="text-emerald-400 flex items-center gap-1">
+            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+            System {backendStatus === "online" ? "Online" : "Offline"}
+          </span>
+          <span className="font-mono">
+            Now:{" "}
+            {new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
+          <span className="font-mono">Last Updated: {lastUpdated}</span>
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
+            className="bg-amber-600 px-4 py-1 rounded-full text-xs font-medium hover:bg-amber-700 transition"
+          >
+            {downloading ? "Exporting..." : "📄 Export PDF"}
+          </button>
+        </div>
+      </header>
+
+      {/* ── Page Title ── */}
+      <div className="px-6 py-4 text-xl font-semibold">
+        WeatherOps GeoAI Dashboard
+      </div>
+
+      {/* ── Metrics Row ── */}
+      <div className="px-6 grid grid-cols-5 gap-4">
+        <MetricCard
+          title="RAIN PEAK"
+          value={rainPeak.peak.toFixed(1)}
+          unit="mm/hr"
+        />
+        <MetricCard
+          title="TEMP PEAK"
+          value={metrics?.temp_peak?.toFixed(1) ?? "28.2"}
+          unit="°C"
+        />
+        <MetricCard
+          title="WIND PEAK"
+          value={metrics?.wind_peak?.toFixed(1) ?? "22.0"}
+          unit="km/h"
+        />
+        <MetricCard
+          title="FLOOD RISK"
+          value={((riskScores.Flood || 0) * 100).toFixed(1)}
+          unit="%"
+        />
+        <MetricCard
+          title="HIGH RISK ZONES"
+          value={metrics?.high_zones ?? "0"}
+          unit="zones"
+        />
+      </div>
+
+      <div className="px-6 pb-4 grid grid-cols-2 gap-4">
+        <MetricCard
+          title="MEDIUM RISK ZONES"
+          value={metrics?.medium_zones ?? "0"}
+          unit="zones"
+        />
+        <MetricCard
+          title="LOW RISK ZONES"
+          value={metrics?.low_zones ?? "0"}
+          unit="zones"
+        />
+      </div>
+
+      {/* ── Hazard Score Bars ── */}
+      <div className="px-6 pb-6 grid grid-cols-4 gap-4">
+        {Object.entries(riskScores).map(([hazard, score]) => (
+          <div key={hazard} className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-5">
+            <div className="flex justify-between text-xs mb-2">
+              <span>
+                {hazard === "Flood" && "🌊"} {hazard === "Heat" && "🔥"}{" "}
+                {hazard === "Wind" && "💨"} {hazard === "Landslide" && "⛰️"} {hazard}
+              </span>
+              <span style={{ color: getRiskColor(score) }}>{(score * 100).toFixed(1)}%</span>
+            </div>
+            <div className="h-2 bg-zinc-700 rounded-full relative">
+              <div
+                className="absolute h-2 rounded-full"
+                style={{ width: `${score * 100}%`, backgroundColor: getRiskColor(score) }}
+              />
+            </div>
+            <div className="text-[10px] text-zinc-400 mt-1">
+              CI: {(riskCIs[hazard]?.[0] * 100).toFixed(0)}–{(riskCIs[hazard]?.[1] * 100).toFixed(0)}%
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Forecast Horizon + Risk Thresholds (Interactive) ── */}
+      <div className="px-6 pt-2 pb-6 space-y-6">
+        {/* Forecast Horizon Slider */}
+        <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-6">
+          <div className="text-xs uppercase tracking-widest text-zinc-400 mb-2">
+            FORECAST HORIZON
+          </div>
+          <div className="flex justify-between text-3xl font-bold mb-4">
+            <span>{forecastHours}</span>
+            <span className="text-amber-400">HOURS</span>
+          </div>
+          <input
+            type="range"
+            min={24}
+            max={120}
+            step={6}
+            value={forecastHours}
+            onChange={(e) => setForecastHours(Number(e.target.value))}
+            className="w-full h-1 bg-amber-400 rounded-lg appearance-none cursor-pointer"
+          />
+        </div>
+
+        {/* Risk Threshold Sliders */}
+        <div className="grid grid-cols-3 gap-4">
+          {/* Rain */}
+          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-6">
+            <div className="text-xs text-zinc-400 mb-1">RAIN (MM/HR)</div>
+            <div className="text-5xl font-bold text-amber-400 mb-2">{rainThreshold}</div>
+            <input
+              type="range"
+              min={20}
+              max={150}
+              value={rainThreshold}
+              onChange={(e) => setRainThreshold(Number(e.target.value))}
+              className="w-full h-1 bg-amber-400 rounded-lg appearance-none cursor-pointer mt-4"
+            />
+          </div>
+
+          {/* Heat */}
+          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-6">
+            <div className="text-xs text-zinc-400 mb-1">HEAT (°C)</div>
+            <div className="text-5xl font-bold text-orange-400 mb-2">{heatThreshold}</div>
+            <input
+              type="range"
+              min={25}
+              max={50}
+              value={heatThreshold}
+              onChange={(e) => setHeatThreshold(Number(e.target.value))}
+              className="w-full h-1 bg-orange-400 rounded-lg appearance-none cursor-pointer mt-4"
+            />
+          </div>
+
+          {/* Wind */}
+          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-6">
+            <div className="text-xs text-zinc-400 mb-1">WIND (KM/H)</div>
+            <div className="text-5xl font-bold text-purple-400 mb-2">{windThreshold}</div>
+            <input
+              type="range"
+              min={10}
+              max={100}
+              value={windThreshold}
+              onChange={(e) => setWindThreshold(Number(e.target.value))}
+              className="w-full h-1 bg-purple-400 rounded-lg appearance-none cursor-pointer mt-4"
+            />
+          </div>
         </div>
       </div>
 
-      {/* ── Weather metric cards ── */}
-      {metrics && (
-        <div className="grid grid-cols-5 gap-3 px-6 py-3 shrink-0">
-          <MetricCard title="Rain Peak"         value={metrics.rain_peak?.toFixed(1) ?? "0.0"}                          unit="mm/hr" />
-          <MetricCard title="Temp Peak"         value={metrics.temp_peak?.toFixed(1) ?? "--"}                           unit="°C"    />
-          <MetricCard title="Wind Peak"         value={metrics.wind_peak?.toFixed(1) ?? "--"}                           unit="km/h"  />
-          <MetricCard title="Flood Risk (ML)"   value={metrics.flood_risk != null ? String(metrics.flood_risk) : "N/A"} unit="%"     />
-          <MetricCard title="High Risk Zones"   value={metrics.high_zones ?? 0}                                         unit="zones" />
-          <MetricCard title="Medium Risk Zones" value={metrics.medium_zones ?? 0}                                       unit="zones" />
-          <MetricCard title="Low Risk Zones"    value={metrics.low_zones ?? 0}                                          unit="zones" />
-        </div>
-      )}
-
-      {/* ── 4-Hazard score bars ── */}
-      {hazardScores && hazardCI && (
-        <div className="grid grid-cols-4 gap-3 px-6 pb-3 shrink-0">
-          <HazardScoreBar label="🌊 Flood"     score={hazardScores.flood}     ci={hazardCI.flood}     color="#60a5fa" />
-          <HazardScoreBar label="🔥 Heat"      score={hazardScores.heat}      ci={hazardCI.heat}      color="#f97316" />
-          <HazardScoreBar label="💨 Wind"      score={hazardScores.wind}      ci={hazardCI.wind}      color="#a78bfa" />
-          <HazardScoreBar label="⛰ Landslide" score={hazardScores.landslide} ci={hazardCI.landslide} color="#f0a500" />
-        </div>
-      )}
-
-      {/* ── Main content: map + action cards ── */}
-      <main className="flex-1 px-6 pb-6 grid grid-cols-12 gap-6 min-h-0">
-
-        {/* ── Map ── */}
-        <section className="col-span-8 bg-zinc-900 rounded-xl flex flex-col min-h-0">
-
-          {/* Hazard tabs + severity filter in one bar */}
-          <div className="flex items-center justify-between gap-2 p-3 border-b border-zinc-800 shrink-0 z-[1000] bg-zinc-900 relative flex-wrap">
-
-            {/* Hazard type tabs */}
-            <div className="flex gap-2">
-              {(["ALL", "FLOOD", "HEAT", "WIND", "LANDSLIDE"] as HazardType[]).map((h) => (
-                <button
-                  key={h}
-                  onClick={() => setHazard(h)}
-                  className={`px-4 py-1 rounded-full text-sm border transition ${
-                    hazard === h
-                      ? "bg-blue-600 border-blue-600 text-white"
-                      : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
-                  }`}
-                >
-                  {h}
-                </button>
-              ))}
-            </div>
-
-            {/* Severity filter pills */}
-            <div className="flex gap-2">
+      {/* ── Map + Action Cards ── */}
+      <main className="flex-1 px-6 grid grid-cols-12 gap-6 min-h-0 pb-6">
+        {/* Map Section */}
+        <section className="col-span-8 bg-zinc-900 rounded-3xl flex flex-col overflow-hidden">
+          {/* Hazard Tabs */}
+          <div className="flex gap-2 p-4 border-b border-[#2a2f3d]">
+            {(["ALL", "FLOOD", "HEAT", "WIND", "LANDSLIDE"] as HazardType[]).map((h) => (
               <button
-                onClick={() => setSeverityFilter(severityFilter === "high" ? "all" : "high")}
-                className={`text-xs px-3 py-1 rounded-full border transition font-medium ${
-                  severityFilter === "high"
-                    ? "bg-red-500/40 text-red-300 border-red-400 shadow-[0_0_8px_rgba(255,34,68,0.5)]"
-                    : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
+                key={h}
+                onClick={() => setHazard(h)}
+                className={`px-6 py-2 rounded-full text-sm border transition-all ${
+                  hazard === h
+                    ? "bg-blue-600 border-blue-600 text-white"
+                    : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
                 }`}
               >
-                🔴 High
+                {h}
               </button>
-              <button
-                onClick={() => setSeverityFilter(severityFilter === "medium" ? "all" : "medium")}
-                className={`text-xs px-3 py-1 rounded-full border transition font-medium ${
-                  severityFilter === "medium"
-                    ? "bg-orange-500/40 text-orange-300 border-orange-400 shadow-[0_0_8px_rgba(255,165,0,0.5)]"
-                    : "bg-orange-500/20 text-orange-400 border-orange-500/30 hover:bg-orange-500/30"
-                }`}
-              >
-                🟠 Medium
-              </button>
-              <button
-                onClick={() => setSeverityFilter(severityFilter === "low" ? "all" : "low")}
-                className={`text-xs px-3 py-1 rounded-full border transition font-medium ${
-                  severityFilter === "low"
-                    ? "bg-yellow-500/40 text-yellow-300 border-yellow-400 shadow-[0_0_8px_rgba(255,204,0,0.5)]"
-                    : "bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30"
-                }`}
-              >
-                🟡 Low
-              </button>
-            </div>
+            ))}
           </div>
 
-          <div className="flex-1 relative min-h-0">
-            {loading ? (
-              <div className="absolute inset-0 flex items-center justify-center text-zinc-400">
-                Loading impact map…
-              </div>
-            ) : (
-              <ImpactMap
-                actions={filteredActions}
-                selectedActionId={selectedActionId}
-                onSelectAction={setSelectedActionId}
-                hazard={hazard}
-                severityFilter={severityFilter}
-              />
-            )}
+          {/* Severity Pills */}
+          <div className="flex gap-2 p-3 border-b border-[#2a2f3d]">
+            {(["all", "high", "medium", "low"] as SeverityFilter[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => setSeverityFilter(s)}
+                className={`px-4 py-1 text-xs rounded-full border transition-all ${
+                  severityFilter === s
+                    ? "bg-white text-black"
+                    : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
+                }`}
+              >
+                {s.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
+          {/* Map */}
+          <div className="flex-1 relative">
+            <ImpactMap
+              actions={filteredActions}
+              selectedActionId={selectedActionId}
+              onSelectAction={setSelectedActionId}
+              hazard={hazard}
+              severityFilter={severityFilter}
+            />
           </div>
         </section>
 
-        {/* ── Action cards ── */}
-        <section className="col-span-4 bg-zinc-900 rounded-xl p-4 flex flex-col min-h-0">
+        {/* Action Cards Panel */}
+        <section className="col-span-4 bg-zinc-900 rounded-3xl p-6 flex flex-col">
+          <h2 className="text-lg font-semibold mb-4">Action Cards</h2>
 
-          <h2 className="text-lg font-semibold mb-1 shrink-0">Action Cards</h2>
-
-          {/* Severity counts — display only */}
-          <div className="flex gap-2 mb-3 shrink-0 flex-wrap">
-            <span className="text-xs px-2 py-1 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
+          <div className="flex gap-2 mb-4">
+            <span className="px-3 py-1 bg-red-500/20 text-red-400 rounded-full text-xs">
               🔴 {highActions.length} High
             </span>
-            <span className="text-xs px-2 py-1 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">
+            <span className="px-3 py-1 bg-orange-500/20 text-orange-400 rounded-full text-xs">
               🟠 {mediumActions.length} Medium
             </span>
-            <span className="text-xs px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+            <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-xs">
               🟡 {lowActions.length} Low
             </span>
           </div>
 
-          {/* Scrollable card list */}
-          <div className="flex-1 overflow-y-auto space-y-3 min-h-0 pr-1">
-            {sortedActions.length === 0 && !loading && (
-              <div className="text-zinc-500 text-sm text-center mt-8">
-                No actions for selected filter.
-              </div>
-            )}
+          <div className="flex-1 overflow-y-auto space-y-3">
             {sortedActions.map((action) => (
               <ActionCard
                 key={action.id}
@@ -330,16 +1027,441 @@ export default function Dashboard() {
               />
             ))}
           </div>
-
-          <button
-            onClick={handleDownload}
-            disabled={downloading}
-            className="mt-4 shrink-0 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition rounded-lg py-3 font-medium text-sm"
-          >
-            {downloading ? "Downloading…" : "📄 Download Report"}
-          </button>
         </section>
       </main>
+
+      {/* ── Tabs (added below map) ── */}
+      <div className="px-6 pb-6">
+        <div className="flex border-b border-[#2a2f3d] mb-6">
+          {(["RECOMMENDATIONS", "FORECAST TIMESERIES", "RAW DATA", "EVALUATION AGENT", "AGENT TRACE"] as Tab[]).map(
+            (tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 text-sm font-medium transition-all ${
+                  activeTab === tab
+                    ? "text-amber-400 border-b-2 border-amber-400"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                {tab}
+              </button>
+            )
+          )}
+        </div>
+
+        {/* Tab Content */}
+        {activeTab === "RECOMMENDATIONS" && (
+          <div className="space-y-6">
+            {/* Seasonal Risk Context */}
+            <div
+              className="bg-[#181b22] border rounded-2xl p-6"
+              style={{ borderColor: `${seasonalContext.color}40` }}
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-xl font-bold" style={{ color: seasonalContext.color }}>
+                    🗓 Seasonal Risk Context · {new Date().toLocaleString("default", { month: "long" })}
+                  </h3>
+                  <p className="text-sm text-zinc-400 mt-1">{seasonalContext.season}</p>
+                </div>
+                <span
+                  className="text-xs font-mono px-3 py-1 rounded-full"
+                  style={{ backgroundColor: `${seasonalContext.color}20`, color: seasonalContext.color }}
+                >
+                  {seasonalContext.season}
+                </span>
+              </div>
+              <div className="flex gap-3 mb-4 flex-wrap">
+                {Object.entries(seasonalContext.hazards).map(([haz, lvl]) => (
+                  <span
+                    key={haz}
+                    className="text-xs font-mono px-3 py-1 rounded-full"
+                    style={{
+                      backgroundColor: `${
+                        lvl === "CRITICAL" ? "#e84040" : lvl === "HIGH" ? "#f06830" : lvl === "MODERATE" ? "#f0a500" : "#00c9a7"
+                      }20`,
+                      color: lvl === "CRITICAL" ? "#e84040" : lvl === "HIGH" ? "#f06830" : lvl === "MODERATE" ? "#f0a500" : "#00c9a7",
+                    }}
+                  >
+                    {haz === "Flood" && "🌊"} {haz === "Heat" && "🔥"} {haz === "Wind" && "💨"} {haz === "Landslide" && "⛰️"} {haz}: {lvl}
+                  </span>
+                ))}
+              </div>
+              <p className="text-zinc-300 text-sm leading-relaxed">{seasonalContext.summary}</p>
+              {seasonalContext.callout && (
+                <div
+                  className="mt-4 p-3 rounded-lg text-sm"
+                  dangerouslySetInnerHTML={{ __html: seasonalContext.callout }}
+                />
+              )}
+            </div>
+
+            {/* Active Recommendations Summary */}
+            <div className="bg-[#111318] border border-amber-600 rounded-xl p-5 flex justify-between items-center">
+              <div>
+                <div className="text-lg font-bold text-amber-400">
+                  {recommendations.length} Active Recommendation{recommendations.length !== 1 ? "s" : ""} · Next {forecastHours}h
+                </div>
+                <div className="text-xs text-zinc-500 mt-1">
+                  Derived from Open-Meteo forecast · terrain-blended · hazard-threshold analysis
+                </div>
+              </div>
+              <div className="flex gap-2">
+                {recommendations.filter((r) => r.level === "critical").length > 0 && (
+                  <span className="px-3 py-1 bg-red-500/20 text-red-400 rounded-full text-xs">
+                    {recommendations.filter((r) => r.level === "critical").length} CRITICAL
+                  </span>
+                )}
+                {recommendations.filter((r) => r.level === "high").length > 0 && (
+                  <span className="px-3 py-1 bg-orange-500/20 text-orange-400 rounded-full text-xs">
+                    {recommendations.filter((r) => r.level === "high").length} HIGH
+                  </span>
+                )}
+                {recommendations.filter((r) => r.level === "moderate").length > 0 && (
+                  <span className="px-3 py-1 bg-amber-500/20 text-amber-400 rounded-full text-xs">
+                    {recommendations.filter((r) => r.level === "moderate").length} MODERATE
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Forecast Snapshot */}
+            <div className="grid grid-cols-5 gap-4">
+              <MetricCard title="🌧 Rain Peak" value={rainPeak?.peak.toFixed(1) ?? "0.0"} unit="mm/hr" />
+              <MetricCard title="🌡 Heat Index" value={tempPeak?.peak.toFixed(1) ?? "0.0"} unit="°C" />
+              <MetricCard title="💨 Wind Peak" value={windPeak?.peak.toFixed(1) ?? "0.0"} unit="km/h" />
+              <MetricCard title="🌊 Flood Proxy" value={floodPeak?.peak.toFixed(0) ?? "0"} unit="mm/6h" />
+              <MetricCard title="⏱ Horizon" value={forecastHours.toString()} unit="hours" />
+            </div>
+
+            {/* Risk Evolution Chart */}
+            <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-4">
+              <h4 className="text-sm font-mono text-zinc-400 mb-3">Risk Evolution — Forecast Window</h4>
+              <Line
+                data={riskEvolutionData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: true,
+                  scales: {
+                    y: {
+                      min: 0,
+                      max: 1,
+                      grid: { color: "#2a2f3d" },
+                      ticks: {
+                        callback: (val) => {
+                          if (val === 0) return "LOW";
+                          if (val === 0.25) return "MOD";
+                          if (val === 0.5) return "HIGH";
+                          if (val === 0.75) return "CRIT";
+                          return "";
+                        },
+                        color: "#8a93a8",
+                      },
+                    },
+                    x: {
+                      ticks: { color: "#8a93a8", maxRotation: 45, autoSkip: true, maxTicksLimit: 8 },
+                      grid: { color: "#2a2f3d" },
+                    },
+                  },
+                  plugins: {
+                    legend: { labels: { color: "#8a93a8" } },
+                    tooltip: { mode: "index", intersect: false },
+                  },
+                }}
+              />
+            </div>
+
+            {/* Detailed Recommendation Cards */}
+            {recommendations.length === 0 ? (
+              <div className="bg-[#111318] border border-teal-500 rounded-xl p-6 text-center">
+                <div className="text-teal-400 font-bold text-lg">✓ All Clear</div>
+                <div className="text-zinc-400 text-sm">All hazard scores below action threshold. Continue routine monitoring.</div>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {Object.entries(
+                  recommendations.reduce((acc, rec) => {
+                    if (!acc[rec.hazard]) acc[rec.hazard] = [];
+                    acc[rec.hazard].push(rec);
+                    return acc;
+                  }, {} as Record<string, Recommendation[]>)
+                ).map(([hazard, recs]) => (
+                  <div key={hazard}>
+                    <h3 className="text-md font-mono text-zinc-400 border-b border-zinc-800 pb-2 mb-3">
+                      {hazard === "Flood" && "🌊"} {hazard === "Heat" && "🔥"} {hazard === "Wind" && "💨"} {hazard === "Landslide" && "⛰️"} {hazard === "Multi-Hazard" && "⚡"} {hazard} Recommendations
+                    </h3>
+                    {recs.map((rec) => (
+                      <div
+                        key={rec.id}
+                        className="bg-[#111318] border-l-4 rounded-xl p-5 mb-4"
+                        style={{ borderLeftColor: getRiskColor(riskScores[rec.hazard] || 0) }}
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <div className="text-xs text-zinc-500 font-mono">ID: {rec.id}</div>
+                            <div className="text-lg font-bold text-white">{rec.title}</div>
+                          </div>
+                          <span
+                            className="text-xs font-mono px-3 py-1 rounded-full"
+                            style={{
+                              backgroundColor: `${
+                                rec.level === "critical" ? "#e84040" : rec.level === "high" ? "#f06830" : "#f0a500"
+                              }20`,
+                              color: rec.level === "critical" ? "#e84040" : rec.level === "high" ? "#f06830" : "#f0a500",
+                            }}
+                          >
+                            {rec.level.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="text-sm text-zinc-300 mb-3" dangerouslySetInnerHTML={{ __html: rec.body }} />
+                        <div className="space-y-1 mb-3">
+                          {rec.actions.map((action, idx) => (
+                            <div key={idx} className="flex items-start gap-2 text-sm text-zinc-300">
+                              <span className="text-amber-400">▸</span>
+                              <span>{action}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {rec.preventiveActions.length > 0 && (
+                          <div className="bg-black/30 rounded-lg p-3 mb-3 border-l-2 border-zinc-600">
+                            <div className="text-xs font-mono text-zinc-500 mb-2">🛡 Preventive Actions</div>
+                            {rec.preventiveActions.map((act, idx) => (
+                              <div key={idx} className="text-xs text-zinc-400 flex gap-2">
+                                <span>▷</span>
+                                <span>{act}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="text-xs text-zinc-500 font-mono mb-2">
+                          FORECAST BASIS: {rec.forecastBasis}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono text-zinc-500">Confidence</span>
+                          <div className="flex-1 h-1 bg-zinc-800 rounded-full relative">
+                            <div
+                              className="absolute h-1 rounded-full"
+                              style={{
+                                left: `${rec.confidence[0] * 100}%`,
+                                width: `${(rec.confidence[1] - rec.confidence[0]) * 100}%`,
+                                backgroundColor: getRiskColor(riskScores[rec.hazard] || 0),
+                                opacity: 0.7,
+                              }}
+                            />
+                          </div>
+                          <span className="text-xs text-zinc-500 font-mono">
+                            {rec.confidence[0].toFixed(2)}–{rec.confidence[1].toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "FORECAST TIMESERIES" && (
+          <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-4">
+            <Line
+              data={timeseriesData}
+              options={{
+                responsive: true,
+                maintainAspectRatio: true,
+                scales: {
+                  "y-rain": {
+                    type: "linear",
+                    position: "left",
+                    title: { display: true, text: "Rain (mm/hr)", color: "#00c9a7" },
+                    grid: { color: "#2a2f3d" },
+                    ticks: { color: "#8a93a8" },
+                  },
+                  "y-temp": {
+                    type: "linear",
+                    position: "right",
+                    title: { display: true, text: "Temp (°C)", color: "#f0a500" },
+                    grid: { drawOnChartArea: false },
+                    ticks: { color: "#8a93a8" },
+                  },
+                  "y-wind": {
+                    type: "linear",
+                    position: "right",
+                    title: { display: true, text: "Wind (km/h)", color: "#a78bfa" },
+                    grid: { drawOnChartArea: false },
+                    ticks: { color: "#8a93a8" },
+                  },
+                  x: {
+                    ticks: { color: "#8a93a8", maxRotation: 45, autoSkip: true, maxTicksLimit: 12 },
+                    grid: { color: "#2a2f3d" },
+                  },
+                },
+                plugins: {
+                  legend: { labels: { color: "#8a93a8" } },
+                  tooltip: { mode: "index", intersect: false },
+                },
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === "RAW DATA" && (
+          <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl overflow-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-[#1e2230] text-zinc-300 text-xs font-mono">
+                <tr>
+                  <th className="px-4 py-2">Time</th>
+                  <th className="px-4 py-2">Rain Raw (mm)</th>
+                  <th className="px-4 py-2">Rain Adj (mm)</th>
+                  <th className="px-4 py-2">Temp (°C)</th>
+                  <th className="px-4 py-2">Heat Index (°C)</th>
+                  <th className="px-4 py-2">Wind (km/h)</th>
+                  <th className="px-4 py-2">Flood Proxy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {forecastData.slice(0, 48).map((row, idx) => (
+                  <tr key={idx} className="border-t border-[#2a2f3d]">
+                    <td className="px-4 py-2 font-mono text-xs">{new Date(row.time).toLocaleString()}</td>
+                    <td className="px-4 py-2">{row.rain_mm.toFixed(1)}</td>
+                    <td className="px-4 py-2">{row.rain_adj.toFixed(1)}</td>
+                    <td className="px-4 py-2">{row.temp_c.toFixed(1)}</td>
+                    <td className="px-4 py-2">{row.heat_index.toFixed(1)}</td>
+                    <td className="px-4 py-2">{row.wind_kmph.toFixed(1)}</td>
+                    <td className="px-4 py-2">{row.flood_proxy.toFixed(0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === "EVALUATION AGENT" && (
+          <div>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-mono text-amber-400">Agent 05 · Statistical Model Evaluation</h3>
+              <button
+                onClick={runEvaluation}
+                disabled={evaluating}
+                className="bg-amber-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-700 transition"
+              >
+                {evaluating ? "Training..." : "▶ Run Evaluation"}
+              </button>
+            </div>
+            {evaluationResults.length === 0 ? (
+              <div className="bg-[#111318] border border-zinc-800 rounded-xl p-8 text-center text-zinc-400">
+                Click "Run Evaluation" to train models and view metrics.
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {evaluationResults.map((res) => (
+                  <div key={res.hazard} className="bg-[#111318] border border-zinc-800 rounded-xl p-5">
+                    <h4 className="text-lg font-bold text-amber-400 mb-2">{res.display}</h4>
+                    <div className="grid grid-cols-4 gap-4 mb-4 text-xs">
+                      <div>Train: {res.n_train}</div>
+                      <div>Test: {res.n_test}</div>
+                      <div>Features: {res.features.length}</div>
+                      {res.task === "clf" && <div>Pos Rate: N/A</div>}
+                      {res.task === "reg" && <div>Baseline RMSE: N/A</div>}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-sm font-mono text-zinc-400 mb-2">Model Comparison</div>
+                      {Object.entries(res.models).map(([name, metrics]) => (
+                        <div key={name} className="flex flex-wrap gap-3 text-xs bg-black/30 p-2 rounded">
+                          <span className="font-bold">{name === res.best_model && "★"} {name}</span>
+                          {res.task === "clf" ? (
+                            <>
+                              <span>AUC: {metrics.roc_auc?.toFixed(3)}</span>
+                              <span>F1: {metrics.f1?.toFixed(3)}</span>
+                              <span>Brier: {metrics.brier?.toFixed(3)}</span>
+                              <span>CV-AUC: {metrics.cv_auc_mean?.toFixed(3)}</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>R²: {metrics.r2?.toFixed(3)}</span>
+                              <span>RMSE: {metrics.rmse?.toFixed(2)}</span>
+                              <span>CV-R²: {metrics.cv_r2_mean?.toFixed(3)}</span>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Placeholder for ROC/Residual plots - you can integrate react-chartjs-2 here */}
+                    {res.roc_data && (
+                      <div className="mt-4">
+                        <div className="text-sm font-mono text-zinc-400">ROC Curve</div>
+                        {/* Add ROC plot using Chart.js */}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Leaderboard */}
+                <div className="bg-[#111318] border border-zinc-800 rounded-xl p-5">
+                  <h4 className="text-lg font-mono text-amber-400 mb-3">🏆 Model Leaderboard</h4>
+                  <div className="space-y-2">
+                    {evaluationResults.map((res) => (
+                      <div key={res.hazard} className="flex items-center gap-3 text-sm">
+                        <div className="w-32">{res.display}</div>
+                        <div className="w-32 font-bold">{res.best_model}</div>
+                        <div className="flex-1 h-1 bg-zinc-800 rounded-full">
+                          <div
+                            className="h-1 rounded-full"
+                            style={{
+                              width: `${(res.models[res.best_model]?.roc_auc || res.models[res.best_model]?.r2 || 0) * 100}%`,
+                              backgroundColor: res.task === "clf" ? "#f0a500" : "#00c9a7",
+                            }}
+                          />
+                        </div>
+                        <div className="w-20 text-right">
+                          {res.task === "clf"
+                            ? `AUC=${(res.models[res.best_model]?.roc_auc || 0).toFixed(3)}`
+                            : `R²=${(res.models[res.best_model]?.r2 || 0).toFixed(3)}`}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "AGENT TRACE" && (
+          <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-5">
+            <h4 className="text-sm font-mono text-zinc-400 mb-4">Pipeline Execution Log</h4>
+            <div className="space-y-3">
+              {agentTrace.length === 0 ? (
+                <div className="text-zinc-500 text-sm">No trace data available.</div>
+              ) : (
+                agentTrace.map((step) => (
+                  <div key={step.idx} className="flex items-start gap-3 text-sm">
+                    <span className="text-amber-400 w-8">{step.idx}</span>
+                    <span
+                      className={`${
+                        step.status === "ok" ? "text-teal-400" : step.status === "warn" ? "text-amber-400" : "text-red-400"
+                      }`}
+                    >
+                      {step.status === "ok" ? "✓" : step.status === "warn" ? "⚡" : "✗"}
+                    </span>
+                    <span className="font-mono">{step.agent}</span>
+                    <span className="text-zinc-500">·</span>
+                    <span className="text-zinc-400">{step.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Block Risk Grid (kept outside tabs as in original) ── */}
+      <div className="px-6 pb-8">
+        <BlockRiskGrid data={blockRiskData} />
+      </div>
     </div>
   );
 }

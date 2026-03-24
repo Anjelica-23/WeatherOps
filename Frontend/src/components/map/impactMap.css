@@ -27,3 +27,12 @@
 .leaflet-tooltip-top::before {
   border-top-color: #2a2f3d !important;
 }
+
+.card {
+  background: #111318;
+  border: 1px solid #2a2f3d;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 14px;
+  color: #f0a500;
+}

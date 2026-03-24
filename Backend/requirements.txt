@@ -17,3 +17,6 @@ lightgbm
 scipy
 catboost
 scikit-learn==1.7.2
+shap
+plotly
+imbalanced-learn

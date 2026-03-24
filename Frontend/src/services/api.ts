@@ -17,9 +17,17 @@ const api = axios.create({
 // FETCH DECISIONS FROM BACKEND
 // ============================================
 
-export async function fetchDecisions(): Promise<AgentDecisionOutput> {
+export async function fetchDecisions(params: {
+  forecast_hours: number;
+  rain_thresh: number;
+  temp_thresh: number;
+  wind_thresh: number;
+}): Promise<AgentDecisionOutput> {
   try {
-    const res = await api.get<AgentDecisionOutput>("/api/decisions");
+    const res = await api.get<AgentDecisionOutput>("/api/decisions", {
+      params, // ✅ VERY IMPORTANT
+    });
+
     return res.data;
   } catch (error) {
     console.error("Error fetching decisions:", error);
@@ -46,7 +54,7 @@ export async function downloadReport(): Promise<Blob> {
 }
 export async function fetchMetrics() {
 
-  const res = await axios.get(`${API_BASE}/api/metrics`);
+  const res = await api.get("/api/metrics");
 
   return res.data;
 
