@@ -13,3 +13,6 @@ rtree
 reportlab
 matplotlib
 python-multipart
+xgboost
+lightgbm
+scipy
