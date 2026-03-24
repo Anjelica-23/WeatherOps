@@ -168,15 +168,42 @@ def fetch_all_weather(lat: float, lon: float,
 # SPATIAL WEATHER — fetch 25 pts, build interpolatable DataFrame
 # ============================================================
 
-def get_spatial_weather() -> pd.DataFrame:
-    """
-    Fetch weather at all 25 ROI sample points and return a DataFrame
-    with one row per successfully-fetched point.
+# ============================================================
+# ORIGINAL get_spatial_weather — no caching (kept for reference)
+# ============================================================
+# def get_spatial_weather() -> pd.DataFrame:
+#     log.info(f"Fetching weather at {len(SAMPLE_PTS)} points ...")
+#     records = []
+#     for i, (lat, lon) in enumerate(SAMPLE_PTS, 1):
+#         rec = fetch_all_weather(lat, lon)
+#         status = "✓" if rec else "✗"
+#         log.info(f"  [{i:02d}/25] ({lat:.3f},{lon:.3f}) {status}")
+#         if rec:
+#             records.append(rec)
+#     if not records:
+#         raise RuntimeError("All 25 weather fetches failed — cannot build spatial weather.")
+#     wx = pd.DataFrame(records)
+#     log.info(
+#         f"Spatial weather ready: {len(wx)}/25 points OK  |  "
+#         f"wind {wx['peak_speed'].min():.1f}–{wx['peak_speed'].max():.1f} km/h  |  "
+#         f"temp {wx['temp_max_C'].min():.1f}–{wx['temp_max_C'].max():.1f} °C"
+#     )
+#     return wx
 
-    Falls back gracefully: if some points fail, IDW extrapolates from
-    neighbours; if ALL fail, raises RuntimeError so app.py can fall back
-    to get_live_weather().
-    """
+# ============================================================
+# CACHED get_spatial_weather — fetches once every 30 minutes
+# ============================================================
+_wx_cache: tuple = (None, 0.0)
+CACHE_TTL = 1800  # 30 minutes
+
+def get_spatial_weather() -> pd.DataFrame:
+    global _wx_cache
+    cached_df, cached_time = _wx_cache
+
+    if cached_df is not None and (time.time() - cached_time) < CACHE_TTL:
+        log.info("Returning cached spatial weather.")
+        return cached_df
+
     log.info(f"Fetching weather at {len(SAMPLE_PTS)} points ...")
     records = []
     for i, (lat, lon) in enumerate(SAMPLE_PTS, 1):
@@ -195,6 +222,7 @@ def get_spatial_weather() -> pd.DataFrame:
         f"wind {wx['peak_speed'].min():.1f}–{wx['peak_speed'].max():.1f} km/h  |  "
         f"temp {wx['temp_max_C'].min():.1f}–{wx['temp_max_C'].max():.1f} °C"
     )
+    _wx_cache = (wx, time.time())
     return wx
 
 
