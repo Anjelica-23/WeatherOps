@@ -322,7 +322,7 @@ def compute_predictions():
         sm,
         rain24,
     ])
-    wind_preds = wind_model.predict(X_wind)
+    wind_preds = np.clip(wind_model.predict(X_wind), 0, 1)
 
     # --- Heat model (10 features) — exact order from CatBoost feature_names_ ---
     # ['urban_density', 'curvature', 'drainage_distance', 'road_distance',
@@ -340,7 +340,7 @@ def compute_predictions():
         sm,
         df["facility_distance"],
     ])
-    heat_preds = heat_model_obj.predict(X_heat)
+    heat_preds = np.clip(heat_model_obj.predict(X_heat), 0, 1)
 
     p75 = np.percentile(flood_probs, 75)
     p40 = np.percentile(flood_probs, 40)
@@ -447,7 +447,7 @@ def metrics():
 
     def ci(values):
         mean = float(np.mean(values) * 100)
-        std  = float(np.std(values) * 100)
+        std  = max(float(np.std(values) * 100), 5.0)
         return [round(max(0, mean - std), 1), round(min(100, mean + std), 1)]
 
     flood_vals     = [p["prob"]           for p in preds]
