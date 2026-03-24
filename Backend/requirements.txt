@@ -16,4 +16,4 @@ xgboost
 lightgbm
 scipy
 catboost
-scikit-learn==1.8.0
+scikit-learn==1.7.2
