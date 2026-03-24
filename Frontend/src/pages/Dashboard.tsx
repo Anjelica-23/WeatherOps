@@ -79,15 +79,6 @@ export default function Dashboard() {
     }
   };
 
-  const checkBackendHealth = async () => {
-    try {
-      await axios.get(`${API_BASE}/api/health`);
-      setBackendStatus("online");
-    } catch {
-      setBackendStatus("offline");
-    }
-  };
-
   const loadMetrics = async () => {
     try {
       const m = await fetchMetrics();

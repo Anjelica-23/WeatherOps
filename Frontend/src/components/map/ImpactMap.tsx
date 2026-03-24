@@ -96,7 +96,7 @@ export default function ImpactMap({
     fetchROIBoundary().then(setROIBoundary).catch(console.error);
     fetchDehradunBlocks().then(setBlocks).catch(console.error);
     axios.get("http://127.0.0.1:8000/api/block_risk")
-      .then(res => setBlockRisk(res.data))
+      .then((res: any)  => setBlockRisk(res.data))
       .catch(console.error);
   }, []);
 
