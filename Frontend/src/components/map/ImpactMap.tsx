@@ -95,7 +95,7 @@ export default function ImpactMap({
   useEffect(() => {
     fetchROIBoundary().then(setROIBoundary).catch(console.error);
     fetchDehradunBlocks().then(setBlocks).catch(console.error);
-    axios.get("https://weatherops-backend.onrender.com/api/block_risk")
+    axios.get("https://weatherops-production.up.railway.app/api/block_risk")
       .then((res: any)  => setBlockRisk(res.data))
       .catch(console.error);
   }, []);

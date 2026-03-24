@@ -10,7 +10,7 @@ import MetricCard from "../components/cards/MetricCard";
 type HazardType = "ALL" | "FLOOD" | "HEAT" | "WIND" | "LANDSLIDE";
 type SeverityFilter = "all" | "high" | "medium" | "low";
 
-const API_BASE = "https://weatherops-backend.onrender.com";
+const API_BASE = "https://weatherops-production.up.railway.app";
 
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 

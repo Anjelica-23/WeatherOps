@@ -6,7 +6,7 @@ import type { AgentDecisionOutput } from "../types/impact";
 // API CONFIG
 // ============================================
 
-const API_BASE = "https://weatherops-backend.onrender.com";
+const API_BASE = "https://weatherops-production.up.railway.app";
 
 const api = axios.create({
   baseURL: API_BASE
@@ -60,6 +60,6 @@ export async function fetchROIBoundary() {
 }
 
 export const fetchDehradunBlocks = async () => {
-  const res = await fetch("https://weatherops-backend.onrender.com/api/dehradun_blocks")
+  const res = await fetch("https://weatherops-production.up.railway.app/api/dehradun_blocks")
   return res.json()
 }
