@@ -3,6 +3,7 @@
 # Multi-Hazard: Flood + Wind + Heat + Landslide
 # ============================================================
 
+from logging import log
 import os
 import time
 import requests
@@ -184,19 +185,54 @@ def get_cached_weather():
 # WEATHER
 # ============================================================
 
-def get_live_weather():
-    res = requests.get(
-        "https://api.open-meteo.com/v1/forecast?latitude=30.3165&longitude=78.0322&current=temperature_2m,wind_speed_10m,soil_moisture_0_to_1cm&hourly=precipitation"
-    ).json()
+#def get_live_weather():
+ #   res = requests.get(
+  #      "https://api.open-meteo.com/v1/forecast?latitude=30.3165&longitude=78.0322&current=temperature_2m,wind_speed_10m,soil_moisture_0_to_1cm&hourly=precipitation"
+   # ).json()
 
-    return {
-        "temp_c": res["current"]["temperature_2m"],
-        "wind_kmh": res["current"]["wind_speed_10m"],
-        "rain_mm": sum(res["hourly"]["precipitation"][:24]),
-        "rainfall_24h": sum(res["hourly"]["precipitation"][:24]),
-        "rainfall_3h": sum(res["hourly"]["precipitation"][:3]),
-        "soil_moisture": res["current"].get("soil_moisture_0_to_1cm", 0.2),
-    }
+    #return {
+     #   "temp_c": res["current"]["temperature_2m"],
+      #  "wind_kmh": res["current"]["wind_speed_10m"],
+       # "rain_mm": sum(res["hourly"]["precipitation"][:24]),
+        #"rainfall_24h": sum(res["hourly"]["precipitation"][:24]),
+      #  "rainfall_3h": sum(res["hourly"]["precipitation"][:3]),
+       # "soil_moisture": res["current"].get("soil_moisture_0_to_1cm", 0.2),
+    #}
+
+def get_live_weather():
+    try:
+        res = requests.get(
+            "https://api.open-meteo.com/v1/forecast"
+            "?latitude=30.3165&longitude=78.0322"
+            "&current=temperature_2m,wind_speed_10m,soil_moisture_0_to_1cm"
+            "&hourly=precipitation"
+            "&timezone=Asia%2FKolkata",
+            timeout=10
+        ).json()
+
+        current = res.get("current", {})
+        hourly  = res.get("hourly", {})
+        precip  = hourly.get("precipitation", [0] * 24)
+
+        return {
+            "temp_c":        current.get("temperature_2m",        25.0),
+            "wind_kmh":      current.get("wind_speed_10m",        20.0),
+            "rain_mm":       sum(precip[:24]),
+            "rainfall_24h":  sum(precip[:24]),
+            "rainfall_3h":   sum(precip[:3]),
+            "soil_moisture": current.get("soil_moisture_0_to_1cm", 0.2),
+        }
+
+    except Exception as e:
+        log.warning(f"get_live_weather failed: {e} — using defaults")
+        return {
+            "temp_c":        28.0,
+            "wind_kmh":      25.0,
+            "rain_mm":       10.0,
+            "rainfall_24h":  10.0,
+            "rainfall_3h":   2.0,
+            "soil_moisture": 0.3,
+        }
 
 def get_weather_for_display():
     """
