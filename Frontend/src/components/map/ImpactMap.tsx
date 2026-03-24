@@ -16,8 +16,6 @@ import {
   fetchDehradunBlocks,
 } from "../../services/api";
 
-import axios from "axios";
-
 import "leaflet/dist/leaflet.css";
 import "./impactMap.css";
 
@@ -90,25 +88,20 @@ export default function ImpactMap({
 }) {
   const [roiBoundary, setROIBoundary] = useState<any>(null);
   const [blocks, setBlocks]           = useState<any>(null);
-  const [blockRisk, setBlockRisk]     = useState<any>({});
 
   useEffect(() => {
     fetchROIBoundary().then(setROIBoundary).catch(console.error);
     fetchDehradunBlocks().then(setBlocks).catch(console.error);
-    axios.get("https://weatherops-production.up.railway.app/api/block_risk")
-      .then((res: any)  => setBlockRisk(res.data))
-      .catch(console.error);
   }, []);
 
-  // ✅ STATIC BLOCK COLORS
   const BLOCK_COLORS: Record<string, string> = {
-    "Chakrata": "#8B3A2B",
-    "Kalsi": "#8B3A2B",
-    "Vikasnagar": "#C2A83E",
-    "Doiwala": "#1F7A6E",
-    "Raipur": "#1F7A6E",
-    "Sahaspur": "#1F7A6E",
-    "Dehradun": "#1F7A6E"
+    "Chakrata":    "#8B3A2B",
+    "Kalsi":       "#8B3A2B",
+    "Vikasnagar":  "#C2A83E",
+    "Doiwala":     "#1F7A6E",
+    "Raipur":      "#1F7A6E",
+    "Sahaspur":    "#1F7A6E",
+    "Dehradun":    "#1F7A6E"
   };
 
   const highIcon    = createPulseIcon("#ff2244", 24);
@@ -173,7 +166,6 @@ export default function ImpactMap({
 
         <FlyToAction actions={actions} selectedActionId={selectedActionId} />
 
-        {/* ── MARKERS — filtered by severityFilter ── */}
         {actions.flatMap((action) =>
           action.locations
             .filter((loc) =>
@@ -254,7 +246,6 @@ export default function ImpactMap({
         )}
       </MapContainer>
 
-      {/* LEGEND (unchanged) */}
       <div className="absolute bottom-4 left-4 z-[1000] bg-black/85 text-white text-xs rounded-lg p-3 border border-zinc-700 backdrop-blur-sm">
         <div className="font-semibold mb-2 uppercase tracking-widest text-zinc-400 text-[10px]">
           {hazard} · {severityFilter === "all" ? "All Severity" : severityFilter.toUpperCase()}
