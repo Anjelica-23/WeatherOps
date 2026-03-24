@@ -100,11 +100,15 @@ export default function ImpactMap({
       .catch(console.error);
   }, []);
 
-  const getBlockColor = (value: number) => {
-    if (value > 0.7) return "#ff2244";
-    if (value > 0.4) return "#ffcc00";
-    if (value > 0.2) return "#00e676";
-    return "#00e5ff";
+  // ✅ STATIC BLOCK COLORS
+  const BLOCK_COLORS: Record<string, string> = {
+    "Chakrata": "#8B3A2B",
+    "Kalsi": "#8B3A2B",
+    "Vikasnagar": "#C2A83E",
+    "Doiwala": "#1F7A6E",
+    "Raipur": "#1F7A6E",
+    "Sahaspur": "#1F7A6E",
+    "Dehradun": "#1F7A6E"
   };
 
   const highIcon    = createPulseIcon("#ff2244", 24);
@@ -136,14 +140,12 @@ export default function ImpactMap({
                 feature.properties?.shapeName ||
                 feature.properties?.block ||
                 feature.properties?.name;
-              const risk = blockRisk?.[name]?.[
-                hazard === "ALL" ? "flood" : hazard.toLowerCase()
-              ] || 0;
+
               return {
-                color: "#444",
-                weight: 1.5,
-                fillColor: getBlockColor(risk),
-                fillOpacity: 0.18,
+                color: "#ffffff",
+                weight: 2,
+                fillColor: BLOCK_COLORS[name] || "#1F7A6E",
+                fillOpacity: 0.7,
               };
             }}
             onEachFeature={(feature: any, layer: any) => {
@@ -152,14 +154,10 @@ export default function ImpactMap({
                 feature.properties?.block ||
                 feature.properties?.name ||
                 "Block";
-              const risk = blockRisk?.[name];
+
               layer.bindTooltip(`
-                <div style="font-family:monospace;font-size:12px;line-height:1.7">
-                  <strong style="font-size:13px">${name}</strong><br/>
-                  🌊 Flood &nbsp;&nbsp;: ${(risk?.flood * 100 || 0).toFixed(1)}%<br/>
-                  💨 Wind &nbsp;&nbsp;&nbsp;: ${(risk?.wind * 100 || 0).toFixed(1)}%<br/>
-                  🔥 Heat &nbsp;&nbsp;&nbsp;: ${(risk?.heat * 100 || 0).toFixed(1)}%<br/>
-                  ⛰️ Landslide: ${(risk?.landslide * 100 || 0).toFixed(1)}%
+                <div style="font-family:monospace;font-size:12px">
+                  <strong>${name}</strong>
                 </div>
               `, { sticky: true });
             }}
@@ -256,7 +254,7 @@ export default function ImpactMap({
         )}
       </MapContainer>
 
-      {/* LEGEND */}
+      {/* LEGEND (unchanged) */}
       <div className="absolute bottom-4 left-4 z-[1000] bg-black/85 text-white text-xs rounded-lg p-3 border border-zinc-700 backdrop-blur-sm">
         <div className="font-semibold mb-2 uppercase tracking-widest text-zinc-400 text-[10px]">
           {hazard} · {severityFilter === "all" ? "All Severity" : severityFilter.toUpperCase()}
