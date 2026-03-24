@@ -16,6 +16,8 @@ import {
   fetchDehradunBlocks,
 } from "../../services/api";
 
+import axios from "axios";
+
 import "leaflet/dist/leaflet.css";
 import "./impactMap.css";
 
@@ -88,24 +90,67 @@ export default function ImpactMap({
 }) {
   const [roiBoundary, setROIBoundary] = useState<any>(null);
   const [blocks, setBlocks]           = useState<any>(null);
+  const [blockRisk, setBlockRisk]     = useState<Record<string, any>>({});
 
   useEffect(() => {
     fetchROIBoundary().then(setROIBoundary).catch(console.error);
     fetchDehradunBlocks().then(setBlocks).catch(console.error);
+    axios
+      .get("https://weatherops-production.up.railway.app/api/block_risk")
+      .then((res: any) => setBlockRisk(res.data))
+      .catch(console.error);
   }, []);
 
   const BLOCK_COLORS: Record<string, string> = {
-    "Chakrata":    "#8B3A2B",
-    "Kalsi":       "#8B3A2B",
-    "Vikasnagar":  "#C2A83E",
-    "Doiwala":     "#1F7A6E",
-    "Raipur":      "#1F7A6E",
-    "Sahaspur":    "#1F7A6E",
-    "Dehradun":    "#1F7A6E"
+    "Chakrata":   "#8B3A2B",
+    "Kalsi":      "#8B3A2B",
+    "Vikasnagar": "#C2A83E",
+    "Doiwala":    "#1F7A6E",
+    "Raipur":     "#1F7A6E",
+    "Sahaspur":   "#1F7A6E",
+    "Dehradun":   "#1F7A6E",
   };
 
   const highIcon    = createPulseIcon("#ff2244", 24);
   const highIconSel = createPulseIcon("#ff6680", 32);
+
+  // Build hazard rows HTML from blockRisk data for a given block name
+  function buildBlockTooltip(name: string): string {
+    const risk = blockRisk[name];
+
+    const hazardRows = risk
+      ? Object.entries(risk)
+          .map(([hz, val]: [string, any]) => {
+            const emoji = HAZARD_EMOJI[hz.toUpperCase()] ?? "⚠️";
+            const level: string =
+              typeof val === "object" ? val?.level ?? val?.severity ?? JSON.stringify(val) : String(val);
+            const color =
+              level.toLowerCase() === "high"
+                ? "#ff2244"
+                : level.toLowerCase() === "medium"
+                ? "#ffcc00"
+                : "#00e676";
+            return `
+              <div style="display:flex;justify-content:space-between;gap:12px;margin-top:3px">
+                <span>${emoji} ${hz}</span>
+                <strong style="color:${color}">${level.toUpperCase()}</strong>
+              </div>`;
+          })
+          .join("")
+      : `<div style="color:#666;margin-top:4px">No risk data</div>`;
+
+    return `
+      <div style="font-family:monospace;font-size:12px;line-height:1.6;min-width:180px">
+        <div style="font-weight:700;font-size:13px;color:#fff;margin-bottom:4px">
+          📦 ${name}
+        </div>
+        <hr style="border-color:#333;margin:4px 0"/>
+        <div style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px">
+          Hazard Risk
+        </div>
+        ${hazardRows}
+      </div>`;
+  }
 
   return (
     <div className="relative w-full h-full">
@@ -127,6 +172,7 @@ export default function ImpactMap({
 
         {blocks && (
           <GeoJSON
+            key={JSON.stringify(blockRisk)} // 👈 re-renders when blockRisk loads
             data={blocks}
             style={(feature: any) => {
               const name =
@@ -148,11 +194,7 @@ export default function ImpactMap({
                 feature.properties?.name ||
                 "Block";
 
-              layer.bindTooltip(`
-                <div style="font-family:monospace;font-size:12px">
-                  <strong>${name}</strong>
-                </div>
-              `, { sticky: true });
+              layer.bindTooltip(buildBlockTooltip(name), { sticky: true });
             }}
           />
         )}
