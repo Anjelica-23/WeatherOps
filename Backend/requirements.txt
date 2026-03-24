@@ -16,3 +16,5 @@ python-multipart
 xgboost
 lightgbm
 scipy
+catboost
+scikit-learn==1.8.0

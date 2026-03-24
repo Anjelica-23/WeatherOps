@@ -3,7 +3,6 @@
 # Multi-Hazard: Flood + Wind + Heat + Landslide
 # ============================================================
 
-from logging import log
 import os
 import time
 import requests
@@ -12,6 +11,8 @@ from functools import lru_cache
 from typing import List, Optional
 from datetime import datetime
 import threading
+import logging
+
 
 import geopandas as gpd
 import numpy as np
@@ -224,7 +225,8 @@ def get_live_weather():
         }
 
     except Exception as e:
-        log.warning(f"get_live_weather failed: {e} — using defaults")
+        logger = logging.getLogger(__name__)
+        logger.warning(f"get_live_weather failed: {e} — using defaults")
         return {
             "temp_c":        28.0,
             "wind_kmh":      25.0,
@@ -259,6 +261,7 @@ def get_weather_for_display():
 
 @lru_cache(maxsize=1)
 def compute_predictions():
+    global LAST_UPDATED
 
     df = load_features_clipped().sample(500, random_state=42).reset_index(drop=True)
 
@@ -441,10 +444,20 @@ def get_block_risk():
 def metrics():
     preds   = compute_predictions()
     weather = get_weather_for_display()
-    return {
-        "flood_risk":   round(np.mean([p["prob"] for p in preds]) * 100, 1),
 
-        # ── ADD THESE THREE ──
+    def ci(values):
+        mean = float(np.mean(values) * 100)
+        std  = float(np.std(values) * 100)
+        return [round(max(0, mean - std), 1), round(min(100, mean + std), 1)]
+
+    flood_vals     = [p["prob"]           for p in preds]
+    wind_vals      = [p["wind_risk"]      for p in preds]
+    heat_vals      = [p["heat_risk"]      for p in preds]
+    landslide_vals = [p["landslide_risk"] for p in preds]
+
+    return {
+        "flood_risk":   round(np.mean(flood_vals) * 100, 1),
+
         "rain_peak":    round(weather["rainfall_24h"], 1),
         "temp_peak":    round(weather["temp_c"], 1),
         "wind_peak":    round(weather["wind_kmh"], 1),
@@ -454,13 +467,19 @@ def metrics():
         "low_zones":    sum(1 for p in preds if p["severity"] == "low"),
 
         "hazard_scores": {
-            "flood":     round(np.mean([p["prob"]           for p in preds]) * 100, 1),
-            "wind":      round(np.mean([p["wind_risk"]      for p in preds]) * 100, 1),
-            "heat":      round(np.mean([p["heat_risk"]      for p in preds]) * 100, 1),
-            "landslide": round(np.mean([p["landslide_risk"] for p in preds]) * 100, 1),
+            "flood":     round(np.mean(flood_vals)     * 100, 1),
+            "wind":      round(np.mean(wind_vals)      * 100, 1),
+            "heat":      round(np.mean(heat_vals)      * 100, 1),
+            "landslide": round(np.mean(landslide_vals) * 100, 1),
+        },
+
+        "hazard_ci": {
+            "flood":     ci(flood_vals),
+            "wind":      ci(wind_vals),
+            "heat":      ci(heat_vals),
+            "landslide": ci(landslide_vals),
         }
     }
-
 @app.get("/")
 def root():
     return {"status": "Running Multi-Hazard Backend"}
