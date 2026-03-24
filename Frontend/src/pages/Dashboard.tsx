@@ -94,7 +94,6 @@ export default function Dashboard() {
       await Promise.all([
         loadMetrics(),
         loadDecisions(),
-        loadDecisions(),
         loadLastUpdated()
         ]);
         setIsRefreshing(false);
