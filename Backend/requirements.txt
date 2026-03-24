@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pandas
+numpy
+scikit-learn
+joblib
+requests
+geopandas
+shapely
+fiona
+pyproj
+rtree
+reportlab
+matplotlib
+python-multipart
