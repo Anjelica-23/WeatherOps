@@ -1,3 +1,5 @@
+setuptools
+wheel
 absl-py==2.3.1
 affine==2.4.0
 aiohappyeyeballs==2.6.1
