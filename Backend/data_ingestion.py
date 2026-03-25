@@ -393,3 +393,28 @@ def get_live_weather() -> dict:
         "rainfall_3h":  sum(res["hourly"]["precipitation"][:3]),
         "soil_moisture":res["current"].get("soil_moisture_0_to_1cm", 0.2),
     }
+
+def get_hourly_forecast(lat: float, lon: float, horizon_hours: int = 72):
+    forecast_days = (horizon_hours + 23) // 24
+    url = (
+        f"https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        f"&hourly=precipitation,temperature_2m,wind_speed_10m,apparent_temperature,relative_humidity_2m"
+        f"&forecast_days={forecast_days}"
+        f"&timezone=Asia%2FKolkata"
+    )
+    response = requests.get(url, timeout=15)
+    response.raise_for_status()
+    data = response.json()
+    hourly = data["hourly"]
+    
+    # Use pd.Series to get .fillna() method
+    df = pd.DataFrame({
+        "time": pd.to_datetime(hourly["time"]),
+        "rain_mm": pd.Series(pd.to_numeric(hourly["precipitation"], errors="coerce")).fillna(0),
+        "temp_c": pd.Series(pd.to_numeric(hourly["temperature_2m"], errors="coerce")).fillna(25),
+        "wind_kmph": pd.Series(pd.to_numeric(hourly["wind_speed_10m"], errors="coerce")).fillna(15),
+        "app_temp": pd.Series(pd.to_numeric(hourly["apparent_temperature"], errors="coerce")).fillna(25),
+        "rh": pd.Series(pd.to_numeric(hourly["relative_humidity_2m"], errors="coerce")).fillna(60),
+    })
+    return df.head(horizon_hours)
