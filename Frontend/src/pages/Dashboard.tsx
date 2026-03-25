@@ -4,7 +4,6 @@ import ImpactMap from "../components/map/ImpactMap";
 import ActionCard from "../components/cards/ActionCard";
 import {
   fetchDecisions,
-  downloadReport,
   fetchMetrics,
 } from "../services/api";
 import type { ActionDecision } from "../types/impact";
@@ -505,14 +504,10 @@ export default function Dashboard() {
 
   // ── UI State ─────────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
-  const [downloading, setDownloading] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [backendStatus, setBackendStatus] = useState<"online" | "offline">("offline");
   const [evaluating, setEvaluating] = useState(false);
 
   // ── Data ─────────────────────────────────────────────────────────────────
   const [metrics, setMetrics] = useState<any>(null);
-  const [lastUpdated, setLastUpdated] = useState<string>("--");
   const [blockRisk, setBlockRisk] = useState<Record<string, any>>({});
   const [forecastData, setForecastData] = useState<ForecastPoint[]>([]);
   const [riskEvolution, setRiskEvolution] = useState<RiskEvolution>({
@@ -536,9 +531,8 @@ export default function Dashboard() {
   // ── Data Fetching ─────────────────────────────────────────────────────────
 
   const loadAllData = async () => {
-    setIsRefreshing(true);
     try {
-      const [metricsRes, decisionsRes, lastUpdatedRes, blockRiskRes, forecastRes, riskEvolRes, traceRes] =
+      const [metricsRes, decisionsRes, blockRiskRes, forecastRes, riskEvolRes, traceRes] =
         await Promise.all([
           fetchMetrics(),
           fetchDecisions({
@@ -547,7 +541,6 @@ export default function Dashboard() {
             temp_thresh: heatThreshold,
             wind_thresh: windThreshold,
           }),
-          axios.get(`${API_BASE}/api/last_updated`),
           axios.get(`${API_BASE}/api/block_risk`),
           axios.get(`${API_BASE}/api/forecast`),
           axios.get(`${API_BASE}/api/risk_evolution`),
@@ -556,7 +549,6 @@ export default function Dashboard() {
 
       setMetrics(metricsRes);
       setActions(decisionsRes.actions || []);
-      setLastUpdated(lastUpdatedRes.data.last_updated || "--");
       setBlockRisk(blockRiskRes.data);
       setForecastData(forecastRes.data.forecast || []);
       setRiskEvolution(riskEvolRes.data);
@@ -569,15 +561,11 @@ export default function Dashboard() {
       if (decisionsRes.risk_ci) {
         setRiskCIs(decisionsRes.risk_ci);
       }
-
-      setBackendStatus("online");
-    } catch (err) {
+    }catch (err) {
       console.error(err);
-      setBackendStatus("offline");
-    } finally {
-      setLoading(false);
-      setIsRefreshing(false);
-    }
+      } finally {
+        setLoading(false);
+      }
   };
 
   useEffect(() => {
@@ -606,26 +594,6 @@ export default function Dashboard() {
     }
   };
 
-  // ── Download Handler ──────────────────────────────────────────────────────
-
-  const handleDownload = async () => {
-    try {
-      setDownloading(true);
-      const blob = await downloadReport();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "WeatherOps_Report.pdf";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setDownloading(false);
-    }
-  };
 
   // ── Derived Data ──────────────────────────────────────────────────────────
 
