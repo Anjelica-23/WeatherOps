@@ -1,17 +1,17 @@
 import { NavLink } from "react-router-dom";
 
 interface NavbarProps {
-  backendStatus: "online" | "offline";
-  lastUpdated: string;
-  onExport: () => void;
-  isExporting: boolean;
+  backendStatus?: "online" | "offline";
+  lastUpdated?: string;
+  onExport?: () => void;
+  isExporting?: boolean;
 }
 
 export default function Navbar({
-  backendStatus,
-  lastUpdated,
+  backendStatus = "online",
+  lastUpdated = "--",
   onExport,
-  isExporting,
+  isExporting = false,
 }: NavbarProps) {
   const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -71,13 +71,15 @@ export default function Navbar({
         </span>
         <span className="font-mono">Now: {now}</span>
         <span className="font-mono">Last Updated: {lastUpdated}</span>
-        <button
-          onClick={onExport}
-          disabled={isExporting}
-          className="bg-amber-600 px-4 py-1 rounded-full text-xs font-medium hover:bg-amber-700 transition"
-        >
-          {isExporting ? "Exporting..." : "📄 Export PDF"}
-        </button>
+        {onExport && (
+          <button
+            onClick={onExport}
+            disabled={isExporting}
+            className="bg-amber-600 px-4 py-1 rounded-full text-xs font-medium hover:bg-amber-700 transition"
+          >
+            {isExporting ? "Exporting..." : "📄 Export PDF"}
+          </button>
+        )}
       </div>
     </header>
   );
