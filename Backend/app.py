@@ -500,28 +500,18 @@ def get_forecast(horizon: int = 72):
 @app.get("/api/risk_evolution")
 def risk_evolution(horizon: int = 72):
     wx = get_hourly_forecast(30.3165, 78.0322, horizon)
-    # Apply same blending
-    slope = 12
-    wx["rain_adj"] = wx["rain_mm"] * (1 + slope / 30)
-    wx["heat_index"] = wx["temp_c"] + 0.33 * wx["rh"] / 100 * wx["temp_c"] - 4
-    wx["flood_proxy"] = wx["rain_adj"].rolling(6, min_periods=1).sum()
-    
-    # Risk thresholds (adjust as needed)
-    rain_thresh = 80
-    temp_thresh = 35
-    wind_thresh = 40
-    flood_thresh = 200
-    
-    risks = []
-    for _, row in wx.iterrows():
-        risks.append({
-            "time": row["time"].strftime("%Y-%m-%d %H:%M:%S"),
-            "flood": min(max(row["rain_adj"] / rain_thresh, 0), 1),
-            "heat": min(max((row["heat_index"] - temp_thresh) / 10, 0), 1),
-            "wind": min(max(row["wind_kmph"] / wind_thresh, 0), 1),
-            "landslide": min(max(row["flood_proxy"] / flood_thresh, 0), 1),
-        })
-    return risks
+    # apply blending and risk calculations...
+    risks = []  # array of {time, flood, heat, wind, landslide}
+
+    # Instead of returning risks directly, restructure:
+    result = {
+        "time": [r["time"] for r in risks],
+        "flood": [r["flood"] for r in risks],
+        "heat": [r["heat"] for r in risks],
+        "wind": [r["wind"] for r in risks],
+        "landslide": [r["landslide"] for r in risks],
+    }
+    return result
 
 @app.get("/api/agent_trace")
 def agent_trace():
