@@ -3,12 +3,13 @@ interface MetricCardProps {
   title: string;
   value: string | number;
   unit?: string;
-  ci?: [number, number];        // optional confidence interval
+  ci?: [number, number];
+  className?: string; // ✅ now accepts className
 }
 
-export default function MetricCard({ title, value, unit, ci }: MetricCardProps) {
+export default function MetricCard({ title, value, unit, ci, className = "" }: MetricCardProps) {
   return (
-    <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-5 hover:border-[#4a5568] transition-all">
+    <div className={`bg-[#181b22] border border-[#3a4155] rounded-2xl p-5 hover:border-[#4a5568] transition-all ${className}`}>
       <div className="text-xs uppercase tracking-widest text-zinc-400 mb-2">
         {title}
       </div>

@@ -183,7 +183,6 @@ const SEASONAL_RISKS: Record<number, SeasonalContext> = {
   },
 };
 
-// Preventive actions per hazard and level (matching Python PREVENTIVE_ACTIONS)
 const PREVENTIVE_ACTIONS: Record<string, Record<string, string[]>> = {
   Flood: {
     critical: [
@@ -271,6 +270,7 @@ const PREVENTIVE_ACTIONS: Record<string, Record<string, string[]>> = {
     ],
   },
 };
+
 function sortBySeverity(actions: ActionDecision[]): ActionDecision[] {
   return [...actions].sort((a, b) =>
     (SEVERITY_ORDER[a.locations[0]?.severity ?? "low"] ?? 2) -
@@ -300,10 +300,8 @@ function buildRecommendations(
 ): Recommendation[] {
   const recs: Recommendation[] = [];
 
-  // If no forecast data, return empty list
   if (!forecast || forecast.length === 0) return recs;
 
-  // Normalize risk and riskCi to avoid undefined keys
   const safeRisk = {
     Flood: risk?.Flood ?? 0,
     Heat: risk?.Heat ?? 0,
@@ -349,12 +347,10 @@ function buildRecommendations(
     }
   }
 
-  // Helper to safely get preventive actions
   const getPreventive = (hazard: string, level: string) => {
     return (PREVENTIVE_ACTIONS[hazard as keyof typeof PREVENTIVE_ACTIONS] as any)?.[level] || [];
   };
 
-  // Flood
   if (safeRisk.Flood >= 0.25) {
     const level = safeRisk.Flood >= 0.75 ? "critical" : safeRisk.Flood >= 0.5 ? "high" : "moderate";
     recs.push({
@@ -374,7 +370,6 @@ function buildRecommendations(
     });
   }
 
-  // Heat
   if (safeRisk.Heat >= 0.25) {
     const level = safeRisk.Heat >= 0.75 ? "critical" : safeRisk.Heat >= 0.5 ? "high" : "moderate";
     recs.push({
@@ -394,7 +389,6 @@ function buildRecommendations(
     });
   }
 
-  // Wind
   if (safeRisk.Wind >= 0.25) {
     const level = safeRisk.Wind >= 0.75 ? "critical" : safeRisk.Wind >= 0.5 ? "high" : "moderate";
     recs.push({
@@ -414,7 +408,6 @@ function buildRecommendations(
     });
   }
 
-  // Landslide
   if (safeRisk.Landslide >= 0.25) {
     const level = safeRisk.Landslide >= 0.75 ? "critical" : safeRisk.Landslide >= 0.5 ? "high" : "moderate";
     recs.push({
@@ -434,7 +427,6 @@ function buildRecommendations(
     });
   }
 
-  // Multi-hazard if 3+ active
   const activeHazards = Object.entries(safeRisk)
     .filter(([_, score]) => score >= 0.25)
     .map(([h]) => h);
@@ -456,7 +448,6 @@ function buildRecommendations(
     });
   }
 
-  // Sort by severity
   const levelOrder: Record<string, number> = { critical: 0, high: 1, moderate: 2, low: 3 };
   recs.sort((a, b) => levelOrder[a.level] - levelOrder[b.level]);
   return recs;
@@ -507,7 +498,6 @@ export default function Dashboard() {
       setBlockRisk(blockRiskRes.data);
       setForecastData(forecastRes.data?.forecast || forecastRes.data || []);
 
-      // Handle risk evolution response (array of objects)
       const evolData = riskEvolRes.data;
       if (Array.isArray(evolData) && evolData.length > 0) {
         setRiskEvolution({
@@ -608,17 +598,17 @@ export default function Dashboard() {
     <div className="h-screen bg-black text-white overflow-y-auto flex flex-col font-sans">
       <div className="px-6 py-4 text-xl font-semibold">WeatherOps GeoAI Dashboard</div>
 
-      {/* Metrics Row */}
-      <div className="px-6 grid grid-cols-5 gap-4">
-        <MetricCard title="RAIN PEAK" value={rainPeak.peak.toFixed(1)} unit="mm/hr" />
-        <MetricCard title="TEMP PEAK" value={metrics?.temp_peak?.toFixed(1) ?? "28.2"} unit="°C" />
-        <MetricCard title="WIND PEAK" value={metrics?.wind_peak?.toFixed(1) ?? "22.0"} unit="km/h" />
-        <MetricCard title="FLOOD RISK" value={((riskScores.Flood || 0) * 100).toFixed(1)} unit="%" />
-        <MetricCard title="HIGH RISK ZONES" value={metrics?.high_zones ?? "0"} unit="zones" />
+      {/* Metrics Row - smaller cards */}
+      <div className="px-6 grid grid-cols-5 gap-2">
+        <MetricCard title="RAIN PEAK" value={rainPeak.peak.toFixed(1)} unit="mm/hr" className="!p-2 !text-sm" />
+        <MetricCard title="TEMP PEAK" value={metrics?.temp_peak?.toFixed(1) ?? "28.2"} unit="°C" className="!p-2 !text-sm" />
+        <MetricCard title="WIND PEAK" value={metrics?.wind_peak?.toFixed(1) ?? "22.0"} unit="km/h" className="!p-2 !text-sm" />
+        <MetricCard title="FLOOD RISK" value={((riskScores.Flood || 0) * 100).toFixed(1)} unit="%" className="!p-2 !text-sm" />
+        <MetricCard title="HIGH RISK ZONES" value={metrics?.high_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
       </div>
-      <div className="px-6 pb-4 grid grid-cols-2 gap-4">
-        <MetricCard title="MEDIUM RISK ZONES" value={metrics?.medium_zones ?? "0"} unit="zones" />
-        <MetricCard title="LOW RISK ZONES" value={metrics?.low_zones ?? "0"} unit="zones" />
+      <div className="px-6 pb-4 grid grid-cols-2 gap-2">
+        <MetricCard title="MEDIUM RISK ZONES" value={metrics?.medium_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
+        <MetricCard title="LOW RISK ZONES" value={metrics?.low_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
       </div>
 
       {/* Hazard Score Bars */}
@@ -637,69 +627,71 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Forecast Horizon + Risk Thresholds */}
-      <div className="px-6 pt-2 pb-6 space-y-6">
-        <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-6">
-          <div className="text-xs uppercase tracking-widest text-zinc-400 mb-2">FORECAST HORIZON</div>
-          <div className="flex justify-between text-3xl font-bold mb-4">
+      {/* Forecast Horizon + Risk Thresholds - smaller */}
+      <div className="px-6 pt-2 pb-6 space-y-4">
+        <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-4">
+          <div className="text-xs uppercase tracking-widest text-zinc-400 mb-1">FORECAST HORIZON</div>
+          <div className="flex justify-between text-2xl font-bold mb-2">
             <span>{forecastHours}</span>
-            <span className="text-amber-400">HOURS</span>
+            <span className="text-amber-400 text-sm">HOURS</span>
           </div>
           <input type="range" min={24} max={120} step={6} value={forecastHours} onChange={(e) => setForecastHours(Number(e.target.value))} className="w-full h-1 bg-amber-400 rounded-lg appearance-none cursor-pointer" />
         </div>
         <div className="grid grid-cols-3 gap-4">
-          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-6">
+          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-4">
             <div className="text-xs text-zinc-400 mb-1">RAIN (MM/HR)</div>
-            <div className="text-5xl font-bold text-amber-400 mb-2">{rainThreshold}</div>
-            <input type="range" min={20} max={150} value={rainThreshold} onChange={(e) => setRainThreshold(Number(e.target.value))} className="w-full h-1 bg-amber-400 rounded-lg appearance-none cursor-pointer mt-4" />
+            <div className="text-3xl font-bold text-amber-400 mb-1">{rainThreshold}</div>
+            <input type="range" min={20} max={150} value={rainThreshold} onChange={(e) => setRainThreshold(Number(e.target.value))} className="w-full h-1 bg-amber-400 rounded-lg appearance-none cursor-pointer mt-2" />
           </div>
-          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-6">
+          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-4">
             <div className="text-xs text-zinc-400 mb-1">HEAT (°C)</div>
-            <div className="text-5xl font-bold text-orange-400 mb-2">{heatThreshold}</div>
-            <input type="range" min={25} max={50} value={heatThreshold} onChange={(e) => setHeatThreshold(Number(e.target.value))} className="w-full h-1 bg-orange-400 rounded-lg appearance-none cursor-pointer mt-4" />
+            <div className="text-3xl font-bold text-orange-400 mb-1">{heatThreshold}</div>
+            <input type="range" min={25} max={50} value={heatThreshold} onChange={(e) => setHeatThreshold(Number(e.target.value))} className="w-full h-1 bg-orange-400 rounded-lg appearance-none cursor-pointer mt-2" />
           </div>
-          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-6">
+          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-4">
             <div className="text-xs text-zinc-400 mb-1">WIND (KM/H)</div>
-            <div className="text-5xl font-bold text-purple-400 mb-2">{windThreshold}</div>
-            <input type="range" min={10} max={100} value={windThreshold} onChange={(e) => setWindThreshold(Number(e.target.value))} className="w-full h-1 bg-purple-400 rounded-lg appearance-none cursor-pointer mt-4" />
+            <div className="text-3xl font-bold text-purple-400 mb-1">{windThreshold}</div>
+            <input type="range" min={10} max={100} value={windThreshold} onChange={(e) => setWindThreshold(Number(e.target.value))} className="w-full h-1 bg-purple-400 rounded-lg appearance-none cursor-pointer mt-2" />
           </div>
         </div>
       </div>
 
-      {/* Map + Action Cards */}
-      <main className="flex-1 px-6 grid grid-cols-12 gap-6 min-h-0 pb-6">
-        {/* Map Section */}
-        <section className="col-span-8 bg-zinc-900 rounded-3xl flex flex-col overflow-hidden min-h-0">
-          <div className="flex gap-2 p-4 border-b border-[#2a2f3d]">
-            {(["ALL", "FLOOD", "HEAT", "WIND", "LANDSLIDE"] as HazardType[]).map((h) => (
-              <button key={h} onClick={() => setHazard(h)} className={`px-6 py-2 rounded-full text-sm border transition-all ${hazard === h ? "bg-blue-600 border-blue-600 text-white" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>{h}</button>
-            ))}
-          </div>
-          <div className="flex gap-2 p-3 border-b border-[#2a2f3d]">
-            {(["all", "high", "medium", "low"] as SeverityFilter[]).map((s) => (
-              <button key={s} onClick={() => setSeverityFilter(s)} className={`px-4 py-1 text-xs rounded-full border transition-all ${severityFilter === s ? "bg-white text-black" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>{s.toUpperCase()}</button>
-            ))}
-          </div>
-          <div className="flex-1 relative min-h-0">
-            <ImpactMap actions={filteredActions} selectedActionId={selectedActionId} onSelectAction={setSelectedActionId} hazard={hazard} severityFilter={severityFilter} />
-          </div>
-        </section>
+      {/* Map + Action Cards Row (equal height, scrollable action cards) */}
+      <div className="flex-1 px-6 min-h-0 pb-6">
+        <div className="flex flex-col lg:flex-row gap-6 h-full">
+          {/* Map Section */}
+          <section className="flex-1 bg-zinc-900 rounded-3xl flex flex-col overflow-hidden min-h-0">
+            <div className="flex gap-2 p-4 border-b border-[#2a2f3d]">
+              {(["ALL", "FLOOD", "HEAT", "WIND", "LANDSLIDE"] as HazardType[]).map((h) => (
+                <button key={h} onClick={() => setHazard(h)} className={`px-6 py-2 rounded-full text-sm border transition-all ${hazard === h ? "bg-blue-600 border-blue-600 text-white" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>{h}</button>
+              ))}
+            </div>
+            <div className="flex gap-2 p-3 border-b border-[#2a2f3d]">
+              {(["all", "high", "medium", "low"] as SeverityFilter[]).map((s) => (
+                <button key={s} onClick={() => setSeverityFilter(s)} className={`px-4 py-1 text-xs rounded-full border transition-all ${severityFilter === s ? "bg-white text-black" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>{s.toUpperCase()}</button>
+              ))}
+            </div>
+            <div className="flex-1 relative min-h-0">
+              <ImpactMap actions={filteredActions} selectedActionId={selectedActionId} onSelectAction={setSelectedActionId} hazard={hazard} severityFilter={severityFilter} />
+            </div>
+          </section>
 
-        {/* Action Cards Panel */}
-        <section className="col-span-4 bg-zinc-900 rounded-3xl p-6 flex flex-col min-h-0">
-          <h2 className="text-lg font-semibold mb-4">Action Cards</h2>
-          <div className="flex gap-2 mb-4">
-            <span className="px-3 py-1 bg-red-500/20 text-red-400 rounded-full text-xs">🔴 {highActions.length} High</span>
-            <span className="px-3 py-1 bg-orange-500/20 text-orange-400 rounded-full text-xs">🟠 {mediumActions.length} Medium</span>
-            <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-xs">🟡 {lowActions.length} Low</span>
-          </div>
-          <div className="flex-1 overflow-y-auto space-y-3">
-            {sortedActions.map((action) => (
-              <ActionCard key={action.id} action={action} selected={selectedActionId === action.id} onClick={() => setSelectedActionId(action.id)} />
-            ))}
-          </div>
-        </section>
-      </main>
+          {/* Action Cards Panel */}
+          <section className="w-full lg:w-96 bg-zinc-900 rounded-3xl p-6 flex flex-col min-h-0">
+            <h2 className="text-lg font-semibold mb-4">Action Cards</h2>
+            <div className="flex gap-2 mb-4">
+              <span className="px-3 py-1 bg-red-500/20 text-red-400 rounded-full text-xs">🔴 {highActions.length} High</span>
+              <span className="px-3 py-1 bg-orange-500/20 text-orange-400 rounded-full text-xs">🟠 {mediumActions.length} Medium</span>
+              <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-xs">🟡 {lowActions.length} Low</span>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-3">
+              {sortedActions.map((action) => (
+                <ActionCard key={action.id} action={action} selected={selectedActionId === action.id} onClick={() => setSelectedActionId(action.id)} />
+              ))}
+            </div>
+          </section>
+        </div>
+      </div>
 
       {/* Tabs */}
       <div className="px-6 pb-6">
@@ -709,10 +701,8 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Tab content (s as before, but ensure it's scrollable) */}
         {activeTab === "RECOMMENDATIONS" && (
           <div className="space-y-6">
-            {/* Seasonal Risk Context */}
             <div className="bg-[#181b22] border rounded-2xl p-6" style={{ borderColor: `${seasonalContext.color}40` }}>
               <div className="flex justify-between items-start mb-4">
                 <div>
@@ -732,7 +722,6 @@ export default function Dashboard() {
               {seasonalContext.callout && <div className="mt-4 p-3 rounded-lg text-sm" dangerouslySetInnerHTML={{ __html: seasonalContext.callout }} />}
             </div>
 
-            {/* Active Recommendations Summary */}
             <div className="bg-[#111318] border border-amber-600 rounded-xl p-5 flex justify-between items-center">
               <div>
                 <div className="text-lg font-bold text-amber-400">{recommendations.length} Active Recommendation{recommendations.length !== 1 ? "s" : ""} · Next {forecastHours}h</div>
@@ -745,7 +734,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Forecast Snapshot */}
             <div className="grid grid-cols-5 gap-4">
               <MetricCard title="🌧 Rain Peak" value={rainPeak?.peak.toFixed(1) ?? "0.0"} unit="mm/hr" />
               <MetricCard title="🌡 Heat Index" value={tempPeak?.peak.toFixed(1) ?? "0.0"} unit="°C" />
@@ -754,7 +742,6 @@ export default function Dashboard() {
               <MetricCard title="⏱ Horizon" value={forecastHours.toString()} unit="hours" />
             </div>
 
-            {/* Risk Evolution Chart */}
             <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-4">
               <h4 className="text-sm font-mono text-zinc-400 mb-3">Risk Evolution — Forecast Window</h4>
               <Line data={riskEvolutionData} options={{
@@ -768,7 +755,6 @@ export default function Dashboard() {
               }} />
             </div>
 
-            {/* Detailed Recommendation Cards */}
             {recommendations.length === 0 ? (
               <div className="bg-[#111318] border border-teal-500 rounded-xl p-6 text-center">
                 <div className="text-teal-400 font-bold text-lg">✓ All Clear</div>
@@ -878,7 +864,6 @@ export default function Dashboard() {
                         <div key={name} className="flex flex-wrap gap-3 text-xs bg-black/30 p-2 rounded"><span className="font-bold">{name === res.best_model && "★"} {name}</span>{res.task === "clf" ? (<> <span>AUC: {metrics.roc_auc?.toFixed(3)}</span> <span>F1: {metrics.f1?.toFixed(3)}</span> <span>Brier: {metrics.brier?.toFixed(3)}</span> <span>CV-AUC: {metrics.cv_auc_mean?.toFixed(3)}</span> </>) : (<> <span>R²: {metrics.r2?.toFixed(3)}</span> <span>RMSE: {metrics.rmse?.toFixed(2)}</span> <span>CV-R²: {metrics.cv_r2_mean?.toFixed(3)}</span> </>)}</div>
                       ))}
                     </div>
-                    {res.roc_data && <div className="mt-4"><div className="text-sm font-mono text-zinc-400">ROC Curve</div></div>}
                   </div>
                 ))}
                 <div className="bg-[#111318] border border-zinc-800 rounded-xl p-5">
