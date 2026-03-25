@@ -711,7 +711,7 @@ const floodPeak = computePeak(forecastData.map(p => p.flood_proxy));
   };
 
   const riskEvolutionData = {
-    labels: riskEvolution.time.map((t) => new Date(t).toLocaleString()),
+    labels: (riskEvolution?.time || []).map((t) => new Date(t).toLocaleString()),
     datasets: [
       {
         label: "Flood Risk",
