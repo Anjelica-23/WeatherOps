@@ -663,8 +663,14 @@ export default function Dashboard() {
     landslide: getLevel(blockRisk[name]?.landslide || 0),
   }));
 
+
   // Build recommendations from forecast and risk
-  const recommendations = buildRecommendations(forecastData, riskScores, riskCIs, forecastHours);
+
+  const recommendations = forecastData.length > 0
+  ? buildRecommendations(forecastData, riskScores, riskCIs, forecastHours)
+  : [];
+
+
 const computePeak = (values: number[]) => {
   if (!values || values.length === 0) return { peak: 0 };
   return { peak: Math.max(...values) };
