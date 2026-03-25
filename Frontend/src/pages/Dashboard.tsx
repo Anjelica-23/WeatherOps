@@ -764,59 +764,8 @@ const floodPeak = computePeak(forecastData.map(p => p.flood_proxy));
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-screen bg-black text-white overflow-hidden flex flex-col font-sans">
+    <div className="h-screen bg-black text-white overflow-y-auto flex flex-col font-sans">
 
-      {/* ── Header ── */}
-      <header className="bg-[#111318] border-b border-[#2a2f3d] px-6 py-3 flex items-center justify-between">
-        <span className="text-emerald-400 flex items-center gap-1">
-          <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-          System {backendStatus === "online" ? "Online" : "Offline"}
-          </span>
-
-          {isRefreshing && (
-            <span className="text-xs text-amber-400 animate-pulse">
-              Refreshing...
-              </span>
-              )}
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">⛈️</span>
-          <span className="text-2xl font-bold">WeatherOps</span>
-        </div>
-
-        <div className="flex items-center gap-6">
-          <button className="bg-blue-600 px-6 py-1.5 rounded-full text-sm font-medium">
-            Dashboard
-          </button>
-          <button className="text-zinc-400 hover:text-white text-sm font-medium">
-            Reports
-          </button>
-          <button className="text-zinc-400 hover:text-white text-sm font-medium">
-            About
-          </button>
-        </div>
-
-        <div className="flex items-center gap-6 text-sm">
-          <span className="text-emerald-400 flex items-center gap-1">
-            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-            System {backendStatus === "online" ? "Online" : "Offline"}
-          </span>
-          <span className="font-mono">
-            Now:{" "}
-            {new Date().toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </span>
-          <span className="font-mono">Last Updated: {lastUpdated}</span>
-          <button
-            onClick={handleDownload}
-            disabled={downloading}
-            className="bg-amber-600 px-4 py-1 rounded-full text-xs font-medium hover:bg-amber-700 transition"
-          >
-            {downloading ? "Exporting..." : "📄 Export PDF"}
-          </button>
-        </div>
-      </header>
 
       {/* ── Page Title ── */}
       <div className="px-6 py-4 text-xl font-semibold">
