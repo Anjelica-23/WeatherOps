@@ -77,9 +77,200 @@ interface AgentStep {
 const API_BASE = "https://weatherops-production.up.railway.app";
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
-const SEASONAL_RISKS: Record<number, SeasonalContext> = { /* … your existing data … */ };
-const PREVENTIVE_ACTIONS: Record<string, Record<string, string[]>> = { /* … your existing data … */ };
+const SEASONAL_RISKS: Record<number, SeasonalContext> = {
+  1: {
+    month: 1,
+    season: "Winter",
+    color: "#00c9a7",
+    summary: "Mid-winter — lowest annual hazard period. Monitor western disturbances for cold wave risk.",
+    hazards: { Flood: "LOW", Heat: "LOW", Wind: "LOW", Landslide: "LOW" },
+    callout: "",
+  },
+  2: {
+    month: 2,
+    season: "Late Winter",
+    color: "#00c9a7",
+    summary: "Late winter — western disturbances bring pre-season winds. Snowmelt begins on high ridges.",
+    hazards: { Flood: "LOW", Heat: "LOW", Wind: "MODERATE", Landslide: "LOW" },
+    callout: "",
+  },
+  3: {
+    month: 3,
+    season: "Pre-Summer",
+    color: "#f0a500",
+    summary: "Pre-summer — temperatures rising fast. Heat risk building in urban core (Paltan Bazaar, Dalanwala).",
+    hazards: { Flood: "LOW", Heat: "MODERATE", Wind: "MODERATE", Landslide: "LOW" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
+  },
+  4: {
+    month: 4,
+    season: "Summer",
+    color: "#f06830",
+    summary: "Summer peak — urban heat island in full effect. Doiwala, Raiwala, and Rishikesh face max thermal load.",
+    hazards: { Flood: "LOW", Heat: "HIGH", Wind: "MODERATE", Landslide: "LOW" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
+  },
+  5: {
+    month: 5,
+    season: "Pre-Monsoon",
+    color: "#f06830",
+    summary: "Pre-monsoon — peak heat with thunderstorm risk. Isolated hailstorms possible in Vikasnagar belt.",
+    hazards: { Flood: "LOW", Heat: "HIGH", Wind: "MODERATE", Landslide: "LOW" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
+  },
+  6: {
+    month: 6,
+    season: "Early Monsoon",
+    color: "#60a5fa",
+    summary: "Monsoon onset — Rispana & Bindal rivers begin rising. Pre-position flood response teams.",
+    hazards: { Flood: "HIGH", Heat: "MODERATE", Wind: "MODERATE", Landslide: "HIGH" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+  },
+  7: {
+    month: 7,
+    season: "Peak Monsoon",
+    color: "#e84040",
+    summary: "Peak monsoon — highest flood & landslide risk. NH-707 closures likely. Full EOC activation.",
+    hazards: { Flood: "CRITICAL", Heat: "LOW", Wind: "HIGH", Landslide: "CRITICAL" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+  },
+  8: {
+    month: 8,
+    season: "Peak Monsoon",
+    color: "#e84040",
+    summary: "Sustained monsoon — cumulative soil saturation maximises landslide probability on slopes >25°.",
+    hazards: { Flood: "CRITICAL", Heat: "LOW", Wind: "MODERATE", Landslide: "HIGH" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+  },
+  9: {
+    month: 9,
+    season: "Retreating Monsoon",
+    color: "#f06830",
+    summary: "Retreating monsoon — residual flood risk. Inspect and repair road damage from peak months.",
+    hazards: { Flood: "HIGH", Heat: "LOW", Wind: "LOW", Landslide: "MODERATE" },
+    callout:
+      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+  },
+  10: {
+    month: 10,
+    season: "Post-Monsoon",
+    color: "#f0a500",
+    summary: "Post-monsoon — reduced hazards. Focus on infrastructure repair and slope stabilisation.",
+    hazards: { Flood: "MODERATE", Heat: "LOW", Wind: "LOW", Landslide: "LOW" },
+    callout: "",
+  },
+  11: {
+    month: 11,
+    season: "Early Winter",
+    color: "#00c9a7",
+    summary: "Winter onset — low hazard across all categories. Fog advisories for Jolly Grant Airport.",
+    hazards: { Flood: "LOW", Heat: "LOW", Wind: "LOW", Landslide: "LOW" },
+    callout: "",
+  },
+  12: {
+    month: 12,
+    season: "Winter",
+    color: "#00c9a7",
+    summary: "Winter — minimal risk. Snowfall possible at Chakrata and Mussoorie elevations above 1800m.",
+    hazards: { Flood: "LOW", Heat: "LOW", Wind: "LOW", Landslide: "LOW" },
+    callout: "",
+  },
+};
 
+// Preventive actions per hazard and level (matching Python PREVENTIVE_ACTIONS)
+const PREVENTIVE_ACTIONS: Record<string, Record<string, string[]>> = {
+  Flood: {
+    critical: [
+      "Evacuate all residents from flood-prone zones — Prem Nagar, Niranjanpur, Doiwala, Raiwala",
+      "Close all river crossings: Rispana (Patel Nagar), Bindal (Ladpur), Song (Doiwala)",
+      "Activate Dehradun District EOC to Level 3; request NDRF deployment from Roorkee",
+      "Issue emergency alert via NDMA App, SMS broadcast, and DD Uttarakhand",
+      "Pre-position rescue boats at ISBT, Dehradun Railway Station, and Doiwala junction",
+    ],
+    high: [
+      "Alert drainage & pumping crews for all low-lying wards",
+      "Close Rispana bridge (Patel Nagar) if water level exceeds 1.5m gauge",
+      "Deploy traffic police at flood-prone underpasses on Rajpur Road",
+      "Open emergency shelters at Government Inter-Colleges in Raipur and Doiwala blocks",
+      "Monitor Dakpathar and Premnagar Barrage discharge on hourly cycle",
+    ],
+    moderate: [
+      "Issue advisory for low-lying residents near Rispana & Bindal river corridors",
+      "Place sandbags at known flood entry points in Prem Nagar and Niranjanpur wards",
+      "Alert municipal drainage teams — inspect and clear blocked drains before rain peak",
+      "Coordinate with UPCL for transformer protection in flood-risk zones",
+    ],
+  },
+  Heat: {
+    critical: [
+      "Declare Heat Emergency — open all government buildings as 24h cooling centres",
+      "Issue mandatory work-from-home for non-essential outdoor workers in Raipur & Doiwala blocks",
+      "Deploy mobile medical teams to Doiwala, Raiwala, Rishikesh, and Haridwar border zone",
+      "Increase ambulance fleet standby at AIIMS Rishikesh by 50% during peak hours",
+      "Distribute ORS packets via Anganwadi network in vulnerable urban and peri-urban blocks",
+    ],
+    high: [
+      "Open cooling centres at Clock Tower, FRI Campus, Rajpur Road parks, and Selaqui",
+      "Halt outdoor construction and road work 11:00–17:00 IST on all active sites",
+      "Issue heat advisory via All India Radio Dehradun, local cable TV, and WhatsApp groups",
+      "Activate early-dismissal protocol for schools in Doiwala and Raipur blocks",
+      "Increase water tanker frequency in Paltan Bazaar, Dalanwala, and ISBT zone",
+    ],
+    moderate: [
+      "Issue advisory for elderly and outdoor workers in Paltan Bazaar & Dalanwala",
+      "Place drinking water kiosks at high-footfall locations: ISBT, Railway Station, FRI Gate",
+      "Alert construction site supervisors to enforce mandatory shade breaks every 2 hours",
+    ],
+  },
+  Wind: {
+    critical: [
+      "Ground all helicopter and small aircraft operations at Jolly Grant Airport immediately",
+      "Evacuate temporary structures and scaffolding on Mussoorie Road and Kempty Road corridor",
+      "Issue emergency advisory for Chakrata plateau and Mussoorie ridge settlements",
+      "Pre-position UPCL rapid-response linemen crews at all ridge substations above 1500m",
+      "Close Kempty Falls and Sahastradhara tourist areas until sustained winds drop below 40 km/h",
+    ],
+    high: [
+      "Notify Jolly Grant ATC — gusts exceeding safe operational thresholds forecast",
+      "Issue falling-tree advisory for Rajpur Road and FRI campus canopy corridor",
+      "Secure loose billboards, hoardings, and construction material at Selaqui Industrial Area",
+      "Alert UPCL linemen for Chakrata–Mussoorie transmission line patrol and pre-fault inspection",
+      "Restrict vehicular movement on Mussoorie Road above Kimberley Point for heavy vehicles",
+    ],
+    moderate: [
+      "Alert fire stations along Mussoorie Road ridge corridor for ember-spread risk",
+      "Inspect and secure power line infrastructure at elevation above 1500m",
+      "Issue caution advisory for two-wheelers and cyclists on exposed ridge roads",
+    ],
+  },
+  Landslide: {
+    critical: [
+      "Immediately close NH-707 Kalsi–Chakrata stretch to all traffic; deploy police pickets",
+      "Evacuate settlements within 200m of slopes >35° in Tyuni–Tons Valley and Benog Tibba",
+      "Deploy SDRF teams to Sahastradhara, Maldevta, Barlowganj, and Benog Tibba zones",
+      "Activate geo-monitoring alert level at all installed sensors in Mussoorie–Landour",
+      "Issue press advisory: avoid Mussoorie Road, Kempty Road, Chakrata Road during rain",
+    ],
+    high: [
+      "Inspect NH-707 Kalsi–Chakrata section; close if debris accumulation or cracking found",
+      "Alert Sahastradhara zone residents and tourism operators — active historical slide location",
+      "Pre-brief SDRF units at Chakrata and Vikasnagar block HQs for rapid 2-hour deployment",
+      "Close Mussoorie Road Kimberley section if sustained rainfall exceeds 30mm/6h",
+      "Deploy additional geo-monitoring sensors at Maldevta and Sahastradhara priority sites",
+    ],
+    moderate: [
+      "Issue seasonal landslide advisory for Mussoorie–Landour and Chakrata tourist areas",
+      "Request PWD inspection of retaining walls and culverts on Chakrata Road and NH-707",
+      "Alert block development officers in Chakrata and Kalsi blocks for community-level inspection",
+    ],
+  },
+};
 function sortBySeverity(actions: ActionDecision[]): ActionDecision[] {
   return [...actions].sort((a, b) =>
     (SEVERITY_ORDER[a.locations[0]?.severity ?? "low"] ?? 2) -
@@ -108,6 +299,23 @@ function buildRecommendations(
   horizon: number
 ): Recommendation[] {
   const recs: Recommendation[] = [];
+
+  // If no forecast data, return empty list
+  if (!forecast || forecast.length === 0) return recs;
+
+  // Normalize risk and riskCi to avoid undefined keys
+  const safeRisk = {
+    Flood: risk?.Flood ?? 0,
+    Heat: risk?.Heat ?? 0,
+    Wind: risk?.Wind ?? 0,
+    Landslide: risk?.Landslide ?? 0,
+  };
+  const safeRiskCi = {
+    Flood: riskCi?.Flood ?? [0, 0],
+    Heat: riskCi?.Heat ?? [0, 0],
+    Wind: riskCi?.Wind ?? [0, 0],
+    Landslide: riskCi?.Landslide ?? [0, 0],
+  };
 
   const times = forecast.map((p) => new Date(p.time));
   const now = new Date();
@@ -141,9 +349,14 @@ function buildRecommendations(
     }
   }
 
+  // Helper to safely get preventive actions
+  const getPreventive = (hazard: string, level: string) => {
+    return (PREVENTIVE_ACTIONS[hazard as keyof typeof PREVENTIVE_ACTIONS] as any)?.[level] || [];
+  };
+
   // Flood
-  if (risk.Flood >= 0.25) {
-    const level = risk.Flood >= 0.75 ? "critical" : risk.Flood >= 0.5 ? "high" : "moderate";
+  if (safeRisk.Flood >= 0.25) {
+    const level = safeRisk.Flood >= 0.75 ? "critical" : safeRisk.Flood >= 0.5 ? "high" : "moderate";
     recs.push({
       id: "FL-01",
       hazard: "Flood",
@@ -155,15 +368,15 @@ function buildRecommendations(
         `Monitor Rispana/Bindal levels every 2h (${rainPeak.when})`,
         "Pre-position rescue boats at ISBT and Railway Station",
       ],
-      preventiveActions: PREVENTIVE_ACTIONS.Flood[level] || [],
+      preventiveActions: getPreventive("Flood", level),
       forecastBasis: `Rain peak ${rainPeak.peak.toFixed(1)} mm/hr · 24h ${rain24h.toFixed(0)} mm · proxy ${floodPeak.peak.toFixed(0)} mm`,
-      confidence: riskCi.Flood || [0, 1],
+      confidence: safeRiskCi.Flood,
     });
   }
 
   // Heat
-  if (risk.Heat >= 0.25) {
-    const level = risk.Heat >= 0.75 ? "critical" : risk.Heat >= 0.5 ? "high" : "moderate";
+  if (safeRisk.Heat >= 0.25) {
+    const level = safeRisk.Heat >= 0.75 ? "critical" : safeRisk.Heat >= 0.5 ? "high" : "moderate";
     recs.push({
       id: "HT-01",
       hazard: "Heat",
@@ -175,15 +388,15 @@ function buildRecommendations(
         "Issue IMD heat wave advisory via Dehradun All India Radio",
         "Halt outdoor construction & road work 11:00–17:00 IST",
       ],
-      preventiveActions: PREVENTIVE_ACTIONS.Heat[level] || [],
+      preventiveActions: getPreventive("Heat", level),
       forecastBasis: `HI peak ${tempPeak.peak.toFixed(1)}°C · >35°C: ${tempHrsAbove35}h · >40°C: ${tempHrsAbove40}h`,
-      confidence: riskCi.Heat || [0, 1],
+      confidence: safeRiskCi.Heat,
     });
   }
 
   // Wind
-  if (risk.Wind >= 0.25) {
-    const level = risk.Wind >= 0.75 ? "critical" : risk.Wind >= 0.5 ? "high" : "moderate";
+  if (safeRisk.Wind >= 0.25) {
+    const level = safeRisk.Wind >= 0.75 ? "critical" : safeRisk.Wind >= 0.5 ? "high" : "moderate";
     recs.push({
       id: "WD-01",
       hazard: "Wind",
@@ -195,15 +408,15 @@ function buildRecommendations(
         "Secure infrastructure on Mussoorie Road corridor",
         "Issue falling-tree advisory for Rajpur Road",
       ],
-      preventiveActions: PREVENTIVE_ACTIONS.Wind[level] || [],
+      preventiveActions: getPreventive("Wind", level),
       forecastBasis: `Wind peak ${windPeak.peak.toFixed(1)} km/h · >50 km/h: ${windGustsAbove50}h`,
-      confidence: riskCi.Wind || [0, 1],
+      confidence: safeRiskCi.Wind,
     });
   }
 
   // Landslide
-  if (risk.Landslide >= 0.25) {
-    const level = risk.Landslide >= 0.75 ? "critical" : risk.Landslide >= 0.5 ? "high" : "moderate";
+  if (safeRisk.Landslide >= 0.25) {
+    const level = safeRisk.Landslide >= 0.75 ? "critical" : safeRisk.Landslide >= 0.5 ? "high" : "moderate";
     recs.push({
       id: "LS-01",
       hazard: "Landslide",
@@ -215,14 +428,14 @@ function buildRecommendations(
         "Close Mussoorie Road Kimberley if rain >30mm/6h",
         "Alert Sahastradhara zone residents",
       ],
-      preventiveActions: PREVENTIVE_ACTIONS.Landslide[level] || [],
-      forecastBasis: `Proxy ${floodPeak.peak.toFixed(0)} mm · consec rain ${consecRain}h · LS ${(risk.Landslide * 100).toFixed(0)}%`,
-      confidence: riskCi.Landslide || [0, 1],
+      preventiveActions: getPreventive("Landslide", level),
+      forecastBasis: `Proxy ${floodPeak.peak.toFixed(0)} mm · consec rain ${consecRain}h · LS ${(safeRisk.Landslide * 100).toFixed(0)}%`,
+      confidence: safeRiskCi.Landslide,
     });
   }
 
-  // Multi‑hazard if 3+ active
-  const activeHazards = Object.entries(risk)
+  // Multi-hazard if 3+ active
+  const activeHazards = Object.entries(safeRisk)
     .filter(([_, score]) => score >= 0.25)
     .map(([h]) => h);
   if (activeHazards.length >= 3) {
@@ -496,7 +709,7 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Tab content (same as before, but ensure it's scrollable) */}
+        {/* Tab content (s as before, but ensure it's scrollable) */}
         {activeTab === "RECOMMENDATIONS" && (
           <div className="space-y-6">
             {/* Seasonal Risk Context */}
