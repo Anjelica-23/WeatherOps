@@ -372,6 +372,36 @@ def compute_predictions():
 
     return preds
 
+def compute_aggregate_risks(horizon: int, rain_thresh: float, temp_thresh: float, wind_thresh: float):
+    """
+    Compute overall risk scores for the forecast horizon.
+    Uses the same logic as the Streamlit HazardsAgent.
+    """
+    df = get_hourly_forecast(30.3165, 78.0322, horizon)
+    if df.empty:
+        risk = {"Flood": 0.0, "Heat": 0.0, "Wind": 0.0, "Landslide": 0.0}
+        risk_ci = {k: (0.0, 0.0) for k in risk}
+        return risk, risk_ci
+
+    slope = 12
+    df["rain_adj"] = df["rain_mm"] * (1 + slope / 30)
+    df["heat_index"] = df["temp_c"] + 0.33 * df["rh"] / 100 * df["temp_c"] - 4
+    df["flood_proxy"] = df["rain_adj"].rolling(6, min_periods=1).sum()
+
+    flood_risk = min(max(df["rain_adj"].max() / rain_thresh, 0), 1)
+    heat_risk = min(max((df["heat_index"].max() - temp_thresh) / 10, 0), 1)
+    wind_risk = min(max(df["wind_kmph"].max() / wind_thresh, 0), 1)
+    landslide_risk = min(max(df["flood_proxy"].max() / 200, 0), 1)
+
+    risk = {
+        "Flood": flood_risk,
+        "Heat": heat_risk,
+        "Wind": wind_risk,
+        "Landslide": landslide_risk
+    }
+    risk_ci = {k: (max(0.0, v - 0.15), min(1.0, v + 0.15)) for k, v in risk.items()}
+    return risk, risk_ci
+
 @lru_cache(maxsize=1)
 def compute_block_risk():
 
@@ -484,34 +514,43 @@ def metrics():
 
 @app.get("/api/forecast")
 def get_forecast(horizon: int = 72):
-    wx = get_hourly_forecast(30.3165, 78.0322, horizon)
-    # Apply blending (same as ModelingAgent)
-    slope = 12  # average slope in degrees
-    wx["rain_adj"] = wx["rain_mm"] * (1 + slope / 30)
-    wx["heat_index"] = wx["temp_c"] + 0.33 * wx["rh"] / 100 * wx["temp_c"] - 4
-    wx["flood_proxy"] = wx["rain_adj"].rolling(6, min_periods=1).sum()
-    
-    # Convert time to string for JSON serialization
-    result = wx[["time", "rain_mm", "rain_adj", "temp_c", "wind_kmph",
+    df = get_hourly_forecast(30.3165, 78.0322, horizon)
+    slope = 12
+    df["rain_adj"] = df["rain_mm"] * (1 + slope / 30)
+    df["heat_index"] = df["temp_c"] + 0.33 * df["rh"] / 100 * df["temp_c"] - 4
+    df["flood_proxy"] = df["rain_adj"].rolling(6, min_periods=1).sum()
+    result = df[["time", "rain_mm", "rain_adj", "temp_c", "wind_kmph",
                  "heat_index", "flood_proxy", "app_temp"]].copy()
     result["time"] = result["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
     return result.to_dict(orient="records")
 
 @app.get("/api/risk_evolution")
 def risk_evolution(horizon: int = 72):
-    wx = get_hourly_forecast(30.3165, 78.0322, horizon)
-    # apply blending and risk calculations...
-    risks = []  # array of {time, flood, heat, wind, landslide}
+    df = get_hourly_forecast(30.3165, 78.0322, horizon)
+    slope = 12
+    df["rain_adj"] = df["rain_mm"] * (1 + slope / 30)
+    df["heat_index"] = df["temp_c"] + 0.33 * df["rh"] / 100 * df["temp_c"] - 4
+    df["flood_proxy"] = df["rain_adj"].rolling(6, min_periods=1).sum()
 
-    # Instead of returning risks directly, restructure:
-    result = {
-        "time": [r["time"] for r in risks],
-        "flood": [r["flood"] for r in risks],
-        "heat": [r["heat"] for r in risks],
-        "wind": [r["wind"] for r in risks],
-        "landslide": [r["landslide"] for r in risks],
-    }
-    return result
+    rain_thresh = 80
+    temp_thresh = 35
+    wind_thresh = 40
+    flood_thresh = 200
+
+    risks = []
+    for _, row in df.iterrows():
+        flood_risk = min(max(row["rain_adj"] / rain_thresh, 0), 1)
+        heat_risk = min(max((row["heat_index"] - temp_thresh) / 10, 0), 1)
+        wind_risk = min(max(row["wind_kmph"] / wind_thresh, 0), 1)
+        landslide_risk = min(max(row["flood_proxy"] / flood_thresh, 0), 1)
+        risks.append({
+            "time": row["time"].strftime("%Y-%m-%d %H:%M:%S"),
+            "flood": flood_risk,
+            "heat": heat_risk,
+            "wind": wind_risk,
+            "landslide": landslide_risk,
+        })
+    return risks
 
 @app.get("/api/agent_trace")
 def agent_trace():
@@ -762,13 +801,17 @@ def get_roi_boundary():
     return load_roi().__geo_interface__
 
 @app.get("/api/decisions")
-def get_decisions():
+def get_decisions(
+    forecast_hours: int = 72,
+    rain_thresh: float = 80,
+    temp_thresh: float = 35,
+    wind_thresh: float = 40
+):
     predictions = compute_predictions()
 
     actions = []
-
     for i, p in enumerate(predictions):
-        # Use nearest known location name — fast, no API call needed
+        # Use nearest known location name
         location_name = nearest_location_name(p["lat"], p["lon"])
 
         risks = {
@@ -819,7 +862,10 @@ def get_decisions():
             }],
         })
 
-    return {"actions": actions}
+    # Compute aggregate risks using the same thresholds
+    risk, risk_ci = compute_aggregate_risks(forecast_hours, rain_thresh, temp_thresh, wind_thresh)
+
+    return {"actions": actions, "risk": risk, "risk_ci": risk_ci}
 
 def get_action_title(severity):
     if severity == "high":
