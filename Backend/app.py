@@ -526,31 +526,37 @@ def get_forecast(horizon: int = 72):
 
 @app.get("/api/risk_evolution")
 def risk_evolution(horizon: int = 72):
-    df = get_hourly_forecast(30.3165, 78.0322, horizon)
-    slope = 12
-    df["rain_adj"] = df["rain_mm"] * (1 + slope / 30)
-    df["heat_index"] = df["temp_c"] + 0.33 * df["rh"] / 100 * df["temp_c"] - 4
-    df["flood_proxy"] = df["rain_adj"].rolling(6, min_periods=1).sum()
+    try:
+        df = get_hourly_forecast(30.3165, 78.0322, horizon)
+        if df.empty:
+            return []
+        slope = 12
+        df["rain_adj"] = df["rain_mm"] * (1 + slope / 30)
+        df["heat_index"] = df["temp_c"] + 0.33 * df["rh"] / 100 * df["temp_c"] - 4
+        df["flood_proxy"] = df["rain_adj"].rolling(6, min_periods=1).sum()
 
-    rain_thresh = 80
-    temp_thresh = 35
-    wind_thresh = 40
-    flood_thresh = 200
+        rain_thresh = 80
+        temp_thresh = 35
+        wind_thresh = 40
+        flood_thresh = 200
 
-    risks = []
-    for _, row in df.iterrows():
-        flood_risk = min(max(row["rain_adj"] / rain_thresh, 0), 1)
-        heat_risk = min(max((row["heat_index"] - temp_thresh) / 10, 0), 1)
-        wind_risk = min(max(row["wind_kmph"] / wind_thresh, 0), 1)
-        landslide_risk = min(max(row["flood_proxy"] / flood_thresh, 0), 1)
-        risks.append({
-            "time": row["time"].strftime("%Y-%m-%d %H:%M:%S"),
-            "flood": flood_risk,
-            "heat": heat_risk,
-            "wind": wind_risk,
-            "landslide": landslide_risk,
-        })
-    return risks
+        risks = []
+        for _, row in df.iterrows():
+            flood_risk = min(max(row["rain_adj"] / rain_thresh, 0), 1)
+            heat_risk = min(max((row["heat_index"] - temp_thresh) / 10, 0), 1)
+            wind_risk = min(max(row["wind_kmph"] / wind_thresh, 0), 1)
+            landslide_risk = min(max(row["flood_proxy"] / flood_thresh, 0), 1)
+            risks.append({
+                "time": row["time"].strftime("%Y-%m-%d %H:%M:%S"),
+                "flood": flood_risk,
+                "heat": heat_risk,
+                "wind": wind_risk,
+                "landslide": landslide_risk,
+            })
+        return risks
+    except Exception as e:
+        print(f"Error in risk_evolution: {e}")
+        return []   # Return empty array on failure
 
 @app.get("/api/agent_trace")
 def agent_trace():
