@@ -56,7 +56,19 @@ function HeatmapLayer({ visible, points }: { visible: boolean; points: [number, 
   useEffect(() => {
     let heatLayer: L.HeatLayer | null = null;
     if (visible && points.length > 0) {
-      heatLayer = L.heatLayer(points, { radius: 25, blur: 15, maxZoom: 17 });
+      heatLayer = L.heatLayer(points, {
+        radius: 35,          // larger radius for smoother spread
+        blur: 20,            // more blur to blend
+        maxZoom: 17,
+        minOpacity: 0.3,
+        gradient: {
+          0.0: "#00c9a7",   // low
+          0.25: "#f0a500",  // moderate
+          0.5: "#f06830",   // high
+          0.75: "#e84040",  // critical
+          1.0: "#ff0000"
+        }
+      });
       heatLayer.addTo(map);
     }
     return () => {
@@ -168,10 +180,9 @@ export default function ImpactMap({
   const [roiBoundary, setROIBoundary] = useState<any>(null);
   const [blocks, setBlocks] = useState<any>(null);
   const [blockRisk, setBlockRisk] = useState<Record<string, any>>({});
-
-  // Heatmap state
   const [heatmapVisible, setHeatmapVisible] = useState(false);
   const [heatmapPoints, setHeatmapPoints] = useState<[number, number, number][]>([]);
+
 
   // Fetch boundaries and block risk on mount
   useEffect(() => {
@@ -262,8 +273,9 @@ export default function ImpactMap({
     return inside;
   }
 
-  const blockStyle = (feature: any) => {
-    const rawName =
+  const blockStyle = useMemo(() => {
+    return (feature: any) => {
+      const rawName =
       feature.properties?.shapeName ||
       feature.properties?.block ||
       feature.properties?.name;
@@ -271,7 +283,11 @@ export default function ImpactMap({
     const fillColor = BLOCK_COLORS[canonical] || "#8a93a8";
     const cluster = tehsilClusters[canonical];
     const hasPoints = cluster && cluster.count > 0;
-    const fillOpacity = hasPoints ? 0.34 : 0.08;
+    const fillOpacity = heatmapVisible
+    ? 0.05
+    : hasPoints
+    ? 0.34
+    : 0.08;
 
     return {
       color: "#7a9af2",
@@ -280,6 +296,7 @@ export default function ImpactMap({
       fillOpacity: fillOpacity,
     };
   };
+  }, [heatmapVisible, tehsilClusters]);
 
   const onEachBlock = (feature: any, layer: any) => {
     const rawName =
@@ -437,7 +454,7 @@ export default function ImpactMap({
 
         {blocks && (
           <GeoJSON
-            key={JSON.stringify(blockRisk) + JSON.stringify(tehsilClusters)}
+            key={JSON.stringify(blockRisk) + JSON.stringify(tehsilClusters) + heatmapVisible}
             data={blocks}
             style={blockStyle}
             onEachFeature={onEachBlock}
