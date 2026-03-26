@@ -20,6 +20,7 @@ import axios from "axios";
 
 import "leaflet/dist/leaflet.css";
 import "./impactMap.css";
+import { API_BASE } from "../../config"; 
 
 // ============================================================
 // Helper: fly to selected action
@@ -152,7 +153,7 @@ export default function ImpactMap({
     fetchROIBoundary().then(setROIBoundary).catch(console.error);
     fetchDehradunBlocks().then(setBlocks).catch(console.error);
     axios
-      .get("https://weatherops-production.up.railway.app/api/block_risk")
+      .get(`${API_BASE}/api/block_risk`)
       .then((res: any) => setBlockRisk(res.data))
       .catch(console.error);
   }, []);

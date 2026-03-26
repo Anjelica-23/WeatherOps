@@ -5,6 +5,7 @@ import MetricCard from "../components/cards/MetricCard";
 import BlockRiskGrid from "../components/BlockRiskGrid";
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from "chart.js";
 import { Line } from "react-chartjs-2";
+import { API_BASE } from "../config";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
@@ -70,9 +71,6 @@ interface AgentStep {
   message: string;
   status: "ok" | "warn" | "err";
 }
-
-const API_BASE = "weatherops-production.up.railway.app";
-
 const SEASONAL_RISKS: Record<number, SeasonalContext> = {
   1: {
     month: 1,

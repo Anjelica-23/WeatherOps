@@ -15,6 +15,7 @@ import {
 import { fetchMetrics, fetchDecisions, downloadReport } from "../services/api";
 import MetricCard from "../components/cards/MetricCard";
 import type { ActionDecision } from "../types/impact";
+import { API_BASE } from "../config";
 
 ChartJS.register(
   CategoryScale,
@@ -34,8 +35,6 @@ interface BlockRisk {
   wind: number;
   landslide: number;
 }
-
-const API_BASE = "weatherops-production.up.railway.app";
 
 export default function Reports() {
   const [metrics, setMetrics] = useState<any>(null);

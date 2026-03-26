@@ -1,12 +1,10 @@
 import axios from "axios";
 import type { AgentDecisionOutput } from "../types/impact";
-
+import { API_BASE } from "../config";
 
 // ============================================
 // API CONFIG
 // ============================================
-
-const API_BASE = "https://weatherops-production.up.railway.app";
 
 const api = axios.create({
   baseURL: API_BASE
