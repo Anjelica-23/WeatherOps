@@ -12,11 +12,8 @@ from typing import List, Optional
 from datetime import datetime
 import threading
 import logging
-
-
 import geopandas as gpd
 import numpy as np
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -27,12 +24,13 @@ from reportlab.lib.colors import red, orange, yellow, green, black
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.platypus import Image
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.charts.piecharts import Pie
 from reportlab.lib.units import inch
 from reportlab.graphics.shapes import Drawing, String
+from evaluation_agent import EvaluationAgent
 from data_ingestion import (
     get_spatial_weather,
     derive_wind_fields,
@@ -41,6 +39,13 @@ from data_ingestion import (
     derive_rainfall_fields,
     get_hourly_forecast,
 )
+import matplotlib.pyplot as plt
+import io
+from reportlab.lib.utils import ImageReader
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.platypus import PageBreak
+
+logger = logging.getLogger(__name__)
 
 # ============================================================
 # CONFIG
@@ -122,7 +127,7 @@ app = FastAPI(title="WeatherOps API", version="4.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[os.environ.get("FRONTEND_URL", "https://your-frontend.railway.app")],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -575,7 +580,9 @@ from evaluation_agent import EvaluationAgent
 def run_evaluation():
     agent = EvaluationAgent()
     results = agent.run()
-    return results
+    # Convert the dict to a list of results (skip any that have errors)
+    results_list = [v for v in results.values() if "error" not in v]
+    return {"results": results_list}
 
 @app.get("/")
 def root():
@@ -600,207 +607,301 @@ def get_last_updated():
 
 @app.get("/api/report")
 def download_report():
-
-    weather = get_weather_for_display()
-    predictions = compute_predictions()
-    blocks = compute_block_risk()
-
-    report_path = os.path.join(BASE_DIR, "WeatherOps_Report.pdf")
-
-    doc = SimpleDocTemplate(report_path)
-    styles = getSampleStyleSheet()
-    elements = []
-
-    # =========================================================
-    # HEADER (NDMA STYLE)
-    # =========================================================
-
-    elements.append(Paragraph("<b>Disaster Risk Assessment Report</b>", styles["Title"]))
-    elements.append(Spacer(1, 10))
-    elements.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles["Normal"]))
-    elements.append(Spacer(1, 20))
-
-    # =========================================================
-    # WEATHER SECTION
-    # =========================================================
-
-    elements.append(Paragraph("<b>Current Weather Conditions</b>", styles["Heading2"]))
-    elements.append(Spacer(1, 10))
-
-    weather_data = [
-        ["Temperature", f"{round(weather['temp_c'],1)} °C"],
-        ["Wind Speed", f"{round(weather['wind_kmh'],1)} km/h"],
-        ["Rainfall (24h)", f"{round(weather['rainfall_24h'],1)} mm"],
-    ]
-
-    weather_table = Table(weather_data, colWidths=[200, 200])
-    weather_table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.grey),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.black),
-    ]))
-
-    elements.append(weather_table)
-    elements.append(Spacer(1, 20))
-
-    # =========================================================
-    # HAZARD SCORES
-    # =========================================================
-
-
-    hazards = {
-        "Flood": np.mean([p["prob"] for p in predictions]),
-        "Wind": np.mean([p["wind_risk"] for p in predictions]),
-        "Heat": np.mean([p["heat_risk"] for p in predictions]),
-        "Landslide": np.mean([p["landslide_risk"] for p in predictions]),
-    }
-
-
-    # =========================================================
-    # PIE CHART
-    # =========================================================
-
-    elements.append(Paragraph("<b>Hazard Risk Distribution</b>", styles["Heading2"]))
-    elements.append(Spacer(1, 15))
-    data_vals = [v * 100 for v in hazards.values()]
-    data_vals = [v * 100 for v in hazards.values()]
-    labels = list(hazards.keys())
-    drawing = Drawing(400, 220)
-    pie = Pie()
-    pie = Pie()
-    pie.x = 100
-    pie.y = 20
-    pie.height = 200
-
-    pie.height = 200
-    pie.labels = [f"{labels[i]} ({round(data_vals[i],1)}%)" for i in range(len(labels))]
-
-# Better colors
-    pie.slices[0].fillColor = colors.blue
-    pie.slices[1].fillColor = colors.orange 
-    pie.slices[2].fillColor = colors.red
-    pie.slices[3].fillColor = colors.green
-
-    pie.slices.strokeWidth = 0.5
-
-    drawing.add(pie)
-
-    elements.append(drawing)
-    elements.append(Spacer(1, 25))
-
-    # =========================================================
-    # TOP LOCATIONS TABLE (HUMAN FRIENDLY)
-    # =========================================================
-
-    elements.append(Paragraph("<b>High Risk Locations</b>", styles["Heading2"]))
-    elements.append(Spacer(1, 10))
-
-    table_data = [["Location", "Main Hazard", "Severity"]]
-
-    top = sorted(predictions, key=lambda x: x["prob"], reverse=True)[:20]
-
-    for p in top:
-        location = nearest_location_name(p["lat"], p["lon"])
-
-        risks = {
-            "Flood": p["prob"],
-            "Wind": p["wind_risk"],
-            "Heat": p["heat_risk"],
-            "Landslide": p["landslide_risk"],
-        }
-
-        hazard = max(risks, key=risks.get)
-        val = risks[hazard]
-
-        if val > 0.7:
-            severity = "HIGH"
-        elif val > 0.4:
-            severity = "MEDIUM"
-        else:
-            severity = "LOW"
-
-        table_data.append([location, hazard, severity])
-
-    table = Table(table_data, colWidths=[200, 150, 100])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.darkblue),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.black),
-    ]))
-
-    elements.append(table)
-    elements.append(Spacer(1, 20))
-
-    # =========================================================
-    # BLOCK LEVEL TABLE
-    # =========================================================
-
-    elements.append(Paragraph("<b>Block Level Risk Summary</b>", styles["Heading2"]))
-
-    block_data = [["Block", "Flood%", "Wind%", "Heat%", "Land%"]]
-
-    for block, vals in list(blocks.items())[:20]:
-        block_data.append([
-            str(block),
-            round(vals["flood"]*100,1),
-            round(vals["wind"]*100,1),
-            round(vals["heat"]*100,1),
-            round(vals["landslide"]*100,1),
-        ])
-
-    block_table = Table(block_data)
-    block_table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.grey),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.black),
-    ]))
-
-    elements.append(block_table)
-    elements.append(Spacer(1, 20))
-
-    # =========================================================
-    # SUMMARY
-    # =========================================================
-
-    elements.append(Paragraph("<b>System Summary</b>", styles["Heading2"]))
-
-    high = sum(1 for p in predictions if p["severity"] == "high")
-    medium = sum(1 for p in predictions if p["severity"] == "medium")
-    low = sum(1 for p in predictions if p["severity"] == "low")
-
-    elements.append(Paragraph(f"High Risk Zones: {high}", styles["Normal"]))
-    elements.append(Paragraph(f"Medium Risk Zones: {medium}", styles["Normal"]))
-    elements.append(Paragraph(f"Low Risk Zones: {low}", styles["Normal"]))
-
-    # =========================================================
-    # BUILD
-    # =========================================================
-
-    doc.build(elements)
-
-    return FileResponse(report_path, media_type="application/pdf", filename="WeatherOps_Report.pdf")
-
-_geocode_cache = {}
-
-def reverse_geocode(lat, lon):
-    key = (round(lat, 3), round(lon, 3))
-    if key in _geocode_cache:
-        return _geocode_cache[key]
+    import io
+    import os
+    import numpy as np
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from datetime import datetime
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib.enums import TA_CENTER
+    import traceback
 
     try:
-        url = "https://nominatim.openstreetmap.org/reverse"
-        params = {"lat": lat, "lon": lon, "format": "json"}
-        headers = {"User-Agent": "WeatherOps"}
+        # --- Fetch data ---
+        weather = get_weather_for_display()
+        predictions = compute_predictions()
+        blocks = compute_block_risk()
+        horizon = 72
 
-        r = requests.get(url, params=params, headers=headers, timeout=5)
-        data = r.json()
+        # Risk evolution data
+        risk_evol = []
+        try:
+            df = get_hourly_forecast(30.3165, 78.0322, horizon)
+            if not df.empty:
+                slope = 12
+                df["rain_adj"] = df["rain_mm"] * (1 + slope / 30)
+                df["heat_index"] = df["temp_c"] + 0.33 * df["rh"] / 100 * df["temp_c"] - 4
+                df["flood_proxy"] = df["rain_adj"].rolling(6, min_periods=1).sum()
+                rain_thresh = 80
+                temp_thresh = 35
+                wind_thresh = 40
+                flood_thresh = 200
+                for _, row in df.iterrows():
+                    risk_evol.append({
+                        "time": row["time"],
+                        "flood": min(max(row["rain_adj"] / rain_thresh, 0), 1),
+                        "heat": min(max((row["heat_index"] - temp_thresh) / 10, 0), 1),
+                        "wind": min(max(row["wind_kmph"] / wind_thresh, 0), 1),
+                        "landslide": min(max(row["flood_proxy"] / flood_thresh, 0), 1),
+                    })
+        except Exception as e:
+            print(f"Risk evolution error: {e}")
 
-        name = data.get("display_name", "").split(",")[0]
-        _geocode_cache[key] = name
+        # Aggregate risks
+        risk, risk_ci = compute_aggregate_risks(horizon, 80, 35, 40)
 
-        time.sleep(1)
-        return name
+        # Actions
+        actions = []
+        for i, p in enumerate(predictions[:20]):
+            location_name = nearest_location_name(p["lat"], p["lon"])
+            risks = {"FLOOD": p["prob"], "WIND": p["wind_risk"], "HEAT": p["heat_risk"], "LANDSLIDE": p["landslide_risk"]}
+            hazard = max(risks, key=risks.get)
+            risk_value = risks[hazard]
+            if risk_value > 0.7:
+                severity = "HIGH"
+                when = "Immediate action required"
+            elif risk_value > 0.4:
+                severity = "MEDIUM"
+                when = "Within 6 hours"
+            else:
+                severity = "LOW"
+                when = "Monitor"
+            if hazard == "FLOOD":
+                title = "Deploy flood barriers"
+            elif hazard == "WIND":
+                title = "Secure loose infrastructure"
+            elif hazard == "HEAT":
+                title = "Issue heatwave alert"
+            else:
+                title = "Monitor landslide-prone slopes"
+            actions.append({
+                "title": title,
+                "location": location_name,
+                "when": when,
+                "hazard": hazard,
+                "severity": severity,
+                "confidence": (max(0, risk_value - 0.1), min(1, risk_value + 0.1))
+            })
+        # Sort by severity and confidence
+        severity_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+        actions.sort(key=lambda a: (severity_order[a["severity"]], -a["confidence"][1]))
+        actions = actions[:5]
 
-    except:
-        return ""
+        # Hazard scores for pie chart
+        hazard_scores = {
+            "Flood": np.mean([p["prob"] for p in predictions]),
+            "Heat": np.mean([p["heat_risk"] for p in predictions]),
+            "Wind": np.mean([p["wind_risk"] for p in predictions]),
+            "Landslide": np.mean([p["landslide_risk"] for p in predictions]),
+        }
+
+        # Block data for bar chart
+        block_list = []
+        for name, vals in blocks.items():
+            avg = (vals["flood"] + vals["wind"] + vals["heat"] + vals["landslide"]) / 4
+            block_list.append((name, avg, vals))
+        block_list.sort(key=lambda x: x[1], reverse=True)
+        top_blocks = block_list[:8]
+
+        # --- Generate charts as PNG images using matplotlib ---
+        chart_images = []
+
+        # 1. Risk Evolution Line Chart
+        if len(risk_evol) > 1:
+            try:
+                plt.figure(figsize=(8, 4))
+                times = [d["time"] for d in risk_evol[::6]]  # sample every 6 hours
+                x = range(len(times))
+                plt.plot(x, [d["flood"] for d in risk_evol[::6]], label="Flood", color="#2dd4bf", linewidth=2)
+                plt.plot(x, [d["heat"] for d in risk_evol[::6]], label="Heat", color="#f97316", linewidth=2)
+                plt.plot(x, [d["wind"] for d in risk_evol[::6]], label="Wind", color="#fbbf24", linewidth=2)
+                plt.plot(x, [d["landslide"] for d in risk_evol[::6]], label="Landslide", color="#c084fc", linewidth=2)
+                plt.xticks(x, [t.strftime("%m/%d %H:00") for t in times], rotation=45, ha="right", fontsize=8)
+                plt.yticks([0, 0.25, 0.5, 0.75, 1], ["LOW", "MOD", "HIGH", "CRIT", ""])
+                plt.ylim(0, 1)
+                plt.xlabel("Time")
+                plt.ylabel("Risk Level")
+                plt.title("Risk Evolution – 72-Hour Forecast")
+                plt.legend(loc="upper left")
+                plt.grid(True, linestyle="--", alpha=0.7)
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format="png", dpi=100)
+                buf.seek(0)
+                chart_images.append(("Risk Evolution", Image(buf, width=6*inch, height=3*inch)))
+                plt.close()
+            except Exception as e:
+                print(f"Risk evolution chart error: {e}")
+
+        # 2. Block-level Bar Chart
+        if top_blocks:
+            try:
+                plt.figure(figsize=(10, 5))
+                block_names = [b[0] for b in top_blocks]
+                flood_vals = [b[2]["flood"]*100 for b in top_blocks]
+                wind_vals = [b[2]["wind"]*100 for b in top_blocks]
+                heat_vals = [b[2]["heat"]*100 for b in top_blocks]
+                land_vals = [b[2]["landslide"]*100 for b in top_blocks]
+                x = np.arange(len(block_names))
+                width = 0.2
+                plt.bar(x - 1.5*width, flood_vals, width, label="Flood", color="#2dd4bf")
+                plt.bar(x - 0.5*width, wind_vals, width, label="Wind", color="#fbbf24")
+                plt.bar(x + 0.5*width, heat_vals, width, label="Heat", color="#f97316")
+                plt.bar(x + 1.5*width, land_vals, width, label="Landslide", color="#c084fc")
+                plt.xticks(x, block_names, rotation=45, ha="right", fontsize=8)
+                plt.ylabel("Risk (%)")
+                plt.title("Block-Level Risk Breakdown")
+                plt.legend()
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format="png", dpi=100)
+                buf.seek(0)
+                chart_images.append(("Block-Level Risk", Image(buf, width=7*inch, height=3.5*inch)))
+                plt.close()
+            except Exception as e:
+                print(f"Bar chart error: {e}")
+
+        # 3. Pie Chart
+        if any(hazard_scores.values()):
+            try:
+                plt.figure(figsize=(4, 4))
+                labels = list(hazard_scores.keys())
+                sizes = [v*100 for v in hazard_scores.values()]
+                colors_pie = ["#2dd4bf", "#f97316", "#fbbf24", "#c084fc"]
+                plt.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90, colors=colors_pie)
+                plt.title("Hazard Risk Distribution")
+                buf = io.BytesIO()
+                plt.savefig(buf, format="png", dpi=100)
+                buf.seek(0)
+                chart_images.append(("Hazard Distribution", Image(buf, width=3*inch, height=3*inch)))
+                plt.close()
+            except Exception as e:
+                print(f"Pie chart error: {e}")
+
+        # --- PDF Document Setup ---
+        pdf_path = os.path.join(BASE_DIR, "WeatherOps_Report.pdf")
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter,
+                                rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=72)
+        styles = getSampleStyleSheet()
+
+        # Custom styles
+        title_style = ParagraphStyle('CustomTitle', parent=styles['Title'], fontSize=24,
+                                      textColor=colors.HexColor('#f0a500'), alignment=TA_CENTER, spaceAfter=30)
+        heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=16,
+                                       textColor=colors.HexColor('#2dd4bf'), spaceAfter=12, spaceBefore=12)
+        normal_style = styles['Normal']
+        normal_style.fontName = 'Helvetica'
+        normal_style.fontSize = 10
+
+        elements = []
+
+        # Cover Page
+        elements.append(Spacer(1, 2*inch))
+        elements.append(Paragraph("WeatherOps - Agentic GeoAI Weather Web App for ROI-Specific Impact Decisions ", title_style))
+        elements.append(Paragraph("Operational Weather Report", heading_style))
+        elements.append(Spacer(1, 0.5*inch))
+        elements.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", normal_style))
+        elements.append(Spacer(1, 0.2*inch))
+        elements.append(Paragraph(f"Valid: Next {horizon} hours", normal_style))
+        elements.append(Spacer(1, 2*inch))
+        elements.append(PageBreak())
+
+        # Executive Summary (metrics)
+        elements.append(Paragraph("Executive Summary", heading_style))
+        metrics_data = [
+            ["Rain Peak", f"{weather['rainfall_24h']:.1f} mm/hr"],
+            ["Temperature Peak", f"{weather['temp_c']:.1f} °C"],
+            ["Wind Peak", f"{weather['wind_kmh']:.1f} km/h"],
+            ["Flood Risk", f"{risk['Flood']*100:.1f}%"],
+            ["High Risk Zones", str(sum(1 for p in predictions if p["severity"] == "high"))],
+            ["Medium Risk Zones", str(sum(1 for p in predictions if p["severity"] == "medium"))],
+            ["Low Risk Zones", str(sum(1 for p in predictions if p["severity"] == "low"))],
+        ]
+        metrics_table = Table(metrics_data, colWidths=[2.5*inch, 1.5*inch])
+        metrics_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2a2f3d')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#3a4155')),
+        ]))
+        elements.append(metrics_table)
+        elements.append(Spacer(1, 0.3*inch))
+
+        # Current Weather
+        elements.append(Paragraph("Current Weather Conditions", heading_style))
+        weather_data = [
+            ["Temperature", f"{weather['temp_c']:.1f} °C"],
+            ["Wind Speed", f"{weather['wind_kmh']:.1f} km/h"],
+            ["Rainfall (24h)", f"{weather['rainfall_24h']:.1f} mm"],
+        ]
+        weather_table = Table(weather_data, colWidths=[2.5*inch, 1.5*inch])
+        weather_table.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#3a4155'))]))
+        elements.append(weather_table)
+        elements.append(Spacer(1, 0.3*inch))
+
+        # Embed charts
+        for title, img in chart_images:
+            elements.append(Paragraph(title, heading_style))
+            elements.append(img)
+            elements.append(Spacer(1, 0.3*inch))
+
+        # Priority Actions (FIXED)
+        if actions:
+            elements.append(Paragraph("Priority Actions", heading_style))
+            action_data = [["Action", "Location", "Severity", "When", "Confidence"]]
+            for a in actions:
+                conf_str = f"{a['confidence'][0]*100:.0f}–{a['confidence'][1]*100:.0f}%"
+                # Optionally shorten very long location names
+                location = a['location']
+                if len(location) > 30:
+                    location = location[:27] + "..."
+                action_data.append([a['title'], location, a['severity'], a['when'], conf_str])
+
+            # Wider columns to accommodate content, with word wrap
+            col_widths = [2.0*inch, 1.8*inch, 0.7*inch, 1.3*inch, 0.8*inch]
+            action_table = Table(action_data, colWidths=col_widths, repeatRows=1, hAlign='CENTER')
+            action_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2a2f3d')),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#3a4155')),
+                ('FONTSIZE', (0,0), (-1,-1), 8),          # Smaller font
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),        # Top align
+                ('WORDWRAP', (0,0), (-1,-1), 'CJK'),      # Enable word wrap
+            ]))
+            # Color code severity
+            for i, row in enumerate(action_data[1:], start=1):
+                severity = row[2]
+                if severity == "HIGH":
+                    color = colors.HexColor('#e84040')
+                elif severity == "MEDIUM":
+                    color = colors.HexColor('#f06830')
+                else:
+                    color = colors.HexColor('#f0a500')
+                action_table.setStyle(TableStyle([('TEXTCOLOR', (2,i), (2,i), color)]))
+            elements.append(action_table)
+            elements.append(Spacer(1, 0.3*inch))
+
+        # Methodology
+        elements.append(Paragraph("Methodology & Data Sources", heading_style))
+        elements.append(Paragraph("This report uses a multi-hazard risk assessment framework integrating:", normal_style))
+        elements.append(Paragraph("• Open-Meteo forecast data (72-hour horizon) blended with high-resolution terrain data.", normal_style))
+        elements.append(Paragraph("• Machine learning models (Random Forest, XGBoost, CatBoost) trained on historical hazard events.", normal_style))
+        elements.append(Paragraph("• Spatial features: elevation, slope, flow accumulation, urban density, infrastructure proximity.", normal_style))
+        elements.append(Spacer(1, 0.2*inch))
+
+        # Build PDF
+        doc.build(elements)
+        return FileResponse(pdf_path, media_type="application/pdf", filename="WeatherOps_Report.pdf")
+
+    except Exception as e:
+        print(f"Report generation failed: {e}")
+        traceback.print_exc()
+        return {"error": str(e)}
 
 @app.get("/api/roi_boundary")
 def get_roi_boundary():

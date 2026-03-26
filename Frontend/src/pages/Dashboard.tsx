@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import ImpactMap from "../components/map/ImpactMap";
-import ActionCard from "../components/cards/ActionCard";
 import { fetchDecisions, fetchMetrics } from "../services/api";
-import type { ActionDecision } from "../types/impact";
 import MetricCard from "../components/cards/MetricCard";
 import BlockRiskGrid from "../components/BlockRiskGrid";
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from "chart.js";
@@ -11,8 +8,6 @@ import { Line } from "react-chartjs-2";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
-type HazardType = "ALL" | "FLOOD" | "HEAT" | "WIND" | "LANDSLIDE";
-type SeverityFilter = "all" | "high" | "medium" | "low";
 type Tab = "RECOMMENDATIONS" | "FORECAST TIMESERIES" | "RAW DATA" | "EVALUATION AGENT" | "AGENT TRACE";
 
 interface ForecastPoint {
@@ -61,10 +56,12 @@ interface EvaluationResult {
   task: "clf" | "reg";
   n_train: number;
   n_test: number;
-  best_model: string;
+   best: string; 
   models: Record<string, any>;
   features: string[];
   roc_data?: { fpr: number[]; tpr: number[]; auc: number };
+  pos_rate?: number;
+  baseline_rmse?: number;
 }
 
 interface AgentStep {
@@ -74,8 +71,7 @@ interface AgentStep {
   status: "ok" | "warn" | "err";
 }
 
-const API_BASE = "https://weatherops-production.up.railway.app";
-const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+const API_BASE = "weatherops-production.up.railway.app";
 
 const SEASONAL_RISKS: Record<number, SeasonalContext> = {
   1: {
@@ -100,8 +96,7 @@ const SEASONAL_RISKS: Record<number, SeasonalContext> = {
     color: "#f0a500",
     summary: "Pre-summer — temperatures rising fast. Heat risk building in urban core (Paltan Bazaar, Dalanwala).",
     hazards: { Flood: "LOW", Heat: "MODERATE", Wind: "MODERATE", Landslide: "LOW" },
-    callout:
-      "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
+    callout: "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
   },
   4: {
     month: 4,
@@ -109,8 +104,7 @@ const SEASONAL_RISKS: Record<number, SeasonalContext> = {
     color: "#f06830",
     summary: "Summer peak — urban heat island in full effect. Doiwala, Raiwala, and Rishikesh face max thermal load.",
     hazards: { Flood: "LOW", Heat: "HIGH", Wind: "MODERATE", Landslide: "LOW" },
-    callout:
-      "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
+    callout: "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
   },
   5: {
     month: 5,
@@ -118,8 +112,7 @@ const SEASONAL_RISKS: Record<number, SeasonalContext> = {
     color: "#f06830",
     summary: "Pre-monsoon — peak heat with thunderstorm risk. Isolated hailstorms possible in Vikasnagar belt.",
     hazards: { Flood: "LOW", Heat: "HIGH", Wind: "MODERATE", Landslide: "LOW" },
-    callout:
-      "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
+    callout: "<div style='margin-top:.7rem;background:rgba(240,104,48,.08);border:1px solid rgba(240,104,48,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#f06830;line-height:1.7;'>☀ <b>Summer / Pre-Monsoon Season</b> — Urban heat island peaks in Dehradun tehsil. Paltan Bazaar and Dalanwala face highest heat-health risk. Ensure cooling centres are operational before noon.</div>",
   },
   6: {
     month: 6,
@@ -127,8 +120,7 @@ const SEASONAL_RISKS: Record<number, SeasonalContext> = {
     color: "#60a5fa",
     summary: "Monsoon onset — Rispana & Bindal rivers begin rising. Pre-position flood response teams.",
     hazards: { Flood: "HIGH", Heat: "MODERATE", Wind: "MODERATE", Landslide: "HIGH" },
-    callout:
-      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+    callout: "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
   },
   7: {
     month: 7,
@@ -136,8 +128,7 @@ const SEASONAL_RISKS: Record<number, SeasonalContext> = {
     color: "#e84040",
     summary: "Peak monsoon — highest flood & landslide risk. NH-707 closures likely. Full EOC activation.",
     hazards: { Flood: "CRITICAL", Heat: "LOW", Wind: "HIGH", Landslide: "CRITICAL" },
-    callout:
-      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+    callout: "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
   },
   8: {
     month: 8,
@@ -145,8 +136,7 @@ const SEASONAL_RISKS: Record<number, SeasonalContext> = {
     color: "#e84040",
     summary: "Sustained monsoon — cumulative soil saturation maximises landslide probability on slopes >25°.",
     hazards: { Flood: "CRITICAL", Heat: "LOW", Wind: "MODERATE", Landslide: "HIGH" },
-    callout:
-      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+    callout: "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
   },
   9: {
     month: 9,
@@ -154,8 +144,7 @@ const SEASONAL_RISKS: Record<number, SeasonalContext> = {
     color: "#f06830",
     summary: "Retreating monsoon — residual flood risk. Inspect and repair road damage from peak months.",
     hazards: { Flood: "HIGH", Heat: "LOW", Wind: "LOW", Landslide: "MODERATE" },
-    callout:
-      "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
+    callout: "<div style='margin-top:.7rem;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:5px;padding:.55rem .8rem;font-family:\"JetBrains Mono\",monospace;font-size:.68rem;color:#60a5fa;line-height:1.7;'>🌧 <b>Monsoon Season Active</b> — Flood and landslide risk elevated. Rispana, Bindal, and Song river catchments require continuous monitoring. NH-707 (Chakrata) prone to debris slides during sustained rainfall events.</div>",
   },
   10: {
     month: 10,
@@ -216,7 +205,7 @@ const PREVENTIVE_ACTIONS: Record<string, Record<string, string[]>> = {
     ],
     high: [
       "Open cooling centres at Clock Tower, FRI Campus, Rajpur Road parks, and Selaqui",
-      "Halt outdoor construction and road work 11:00–17:00 IST on all active sites",
+      "Halt outdoor construction and road work 11:00-17:00 IST on all active sites",
       "Issue heat advisory via All India Radio Dehradun, local cable TV, and WhatsApp groups",
       "Activate early-dismissal protocol for schools in Doiwala and Raipur blocks",
       "Increase water tanker frequency in Paltan Bazaar, Dalanwala, and ISBT zone",
@@ -239,7 +228,7 @@ const PREVENTIVE_ACTIONS: Record<string, Record<string, string[]>> = {
       "Notify Jolly Grant ATC — gusts exceeding safe operational thresholds forecast",
       "Issue falling-tree advisory for Rajpur Road and FRI campus canopy corridor",
       "Secure loose billboards, hoardings, and construction material at Selaqui Industrial Area",
-      "Alert UPCL linemen for Chakrata–Mussoorie transmission line patrol and pre-fault inspection",
+      "Alert UPCL linemen for Chakrata-Mussoorie transmission line patrol and pre-fault inspection",
       "Restrict vehicular movement on Mussoorie Road above Kimberley Point for heavy vehicles",
     ],
     moderate: [
@@ -250,33 +239,26 @@ const PREVENTIVE_ACTIONS: Record<string, Record<string, string[]>> = {
   },
   Landslide: {
     critical: [
-      "Immediately close NH-707 Kalsi–Chakrata stretch to all traffic; deploy police pickets",
-      "Evacuate settlements within 200m of slopes >35° in Tyuni–Tons Valley and Benog Tibba",
+      "Immediately close NH-707 Kalsi-Chakrata stretch to all traffic; deploy police pickets",
+      "Evacuate settlements within 200m of slopes >35° in Tyuni-Tons Valley and Benog Tibba",
       "Deploy SDRF teams to Sahastradhara, Maldevta, Barlowganj, and Benog Tibba zones",
-      "Activate geo-monitoring alert level at all installed sensors in Mussoorie–Landour",
+      "Activate geo-monitoring alert level at all installed sensors in Mussoorie-Landour",
       "Issue press advisory: avoid Mussoorie Road, Kempty Road, Chakrata Road during rain",
     ],
     high: [
-      "Inspect NH-707 Kalsi–Chakrata section; close if debris accumulation or cracking found",
+      "Inspect NH-707 Kalsi-Chakrata section; close if debris accumulation or cracking found",
       "Alert Sahastradhara zone residents and tourism operators — active historical slide location",
       "Pre-brief SDRF units at Chakrata and Vikasnagar block HQs for rapid 2-hour deployment",
       "Close Mussoorie Road Kimberley section if sustained rainfall exceeds 30mm/6h",
       "Deploy additional geo-monitoring sensors at Maldevta and Sahastradhara priority sites",
     ],
     moderate: [
-      "Issue seasonal landslide advisory for Mussoorie–Landour and Chakrata tourist areas",
+      "Issue seasonal landslide advisory for Mussoorie-Landour and Chakrata tourist areas",
       "Request PWD inspection of retaining walls and culverts on Chakrata Road and NH-707",
       "Alert block development officers in Chakrata and Kalsi blocks for community-level inspection",
     ],
   },
 };
-
-function sortBySeverity(actions: ActionDecision[]): ActionDecision[] {
-  return [...actions].sort((a, b) =>
-    (SEVERITY_ORDER[a.locations[0]?.severity ?? "low"] ?? 2) -
-    (SEVERITY_ORDER[b.locations[0]?.severity ?? "low"] ?? 2)
-  );
-}
 
 function getLevel(val: number): string {
   if (val >= 0.75) return "CRITICAL";
@@ -455,18 +437,13 @@ function buildRecommendations(
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<Tab>("RECOMMENDATIONS");
-  const [actions, setActions] = useState<ActionDecision[]>([]);
-  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
-  const [hazard, setHazard] = useState<HazardType>("ALL");
-  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
+  const [loading, setLoading] = useState(true);
+  const [evaluating, setEvaluating] = useState(false);
 
   const [forecastHours, setForecastHours] = useState(72);
   const [rainThreshold, setRainThreshold] = useState(80);
   const [heatThreshold, setHeatThreshold] = useState(35);
   const [windThreshold, setWindThreshold] = useState(40);
-
-  const [loading, setLoading] = useState(true);
-  const [evaluating, setEvaluating] = useState(false);
 
   const [metrics, setMetrics] = useState<any>(null);
   const [blockRisk, setBlockRisk] = useState<Record<string, any>>({});
@@ -494,7 +471,6 @@ export default function Dashboard() {
       ]);
 
       setMetrics(metricsRes);
-      setActions(decisionsRes.actions || []);
       setBlockRisk(blockRiskRes.data);
       setForecastData(forecastRes.data?.forecast || forecastRes.data || []);
 
@@ -544,13 +520,6 @@ export default function Dashboard() {
     }
   };
 
-  const filteredActions = hazard === "ALL" ? actions : actions.filter((a) => a.hazard?.toUpperCase() === hazard);
-  const severityFiltered = severityFilter === "all" ? filteredActions : filteredActions.filter((a) => a.locations[0]?.severity === severityFilter);
-  const sortedActions = sortBySeverity(severityFiltered).slice(0, 40);
-  const highActions = sortBySeverity(filteredActions).filter((a) => a.locations[0]?.severity === "high").slice(0, 15);
-  const mediumActions = sortBySeverity(filteredActions).filter((a) => a.locations[0]?.severity === "medium").slice(0, 15);
-  const lowActions = sortBySeverity(filteredActions).filter((a) => a.locations[0]?.severity === "low").slice(0, 10);
-
   const blockRiskData = Object.keys(blockRisk || {}).map((name) => ({
     name,
     flood: getLevel(blockRisk[name]?.flood || 0),
@@ -598,20 +567,93 @@ export default function Dashboard() {
     <div className="h-screen bg-black text-white overflow-y-auto flex flex-col font-sans">
       <div className="px-6 py-4 text-xl font-semibold">WeatherOps GeoAI Dashboard</div>
 
-      {/* Metrics Row - smaller cards */}
-      <div className="px-6 grid grid-cols-5 gap-2">
-        <MetricCard title="RAIN PEAK" value={rainPeak.peak.toFixed(1)} unit="mm/hr" className="!p-2 !text-sm" />
-        <MetricCard title="TEMP PEAK" value={metrics?.temp_peak?.toFixed(1) ?? "28.2"} unit="°C" className="!p-2 !text-sm" />
-        <MetricCard title="WIND PEAK" value={metrics?.wind_peak?.toFixed(1) ?? "22.0"} unit="km/h" className="!p-2 !text-sm" />
-        <MetricCard title="FLOOD RISK" value={((riskScores.Flood || 0) * 100).toFixed(1)} unit="%" className="!p-2 !text-sm" />
-        <MetricCard title="HIGH RISK ZONES" value={metrics?.high_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
-      </div>
-      <div className="px-6 pb-4 grid grid-cols-2 gap-2">
-        <MetricCard title="MEDIUM RISK ZONES" value={metrics?.medium_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
-        <MetricCard title="LOW RISK ZONES" value={metrics?.low_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
+      <div className="px-6 mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-4 flex flex-col justify-between">
+            <div className="text-xs uppercase tracking-widest text-zinc-400 mb-3">Forecast Parameters</div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Forecast Horizon</span>
+                  <span className="text-amber-400">{forecastHours}h</span>
+                </div>
+                <input
+                  type="range"
+                  min={24}
+                  max={120}
+                  step={24}
+                  value={forecastHours}
+                  onChange={(e) => setForecastHours(Number(e.target.value))}
+                  className="w-full h-1 bg-amber-400 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Rain (mm/hr)</span>
+                  <span className="text-amber-400">{rainThreshold}</span>
+                </div>
+                <input
+                  type="range"
+                  min={20}
+                  max={150}
+                  step={5}
+                  value={rainThreshold}
+                  onChange={(e) => setRainThreshold(Number(e.target.value))}
+                  className="w-full h-1 bg-amber-400 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Heat (°C)</span>
+                  <span className="text-orange-400">{heatThreshold}</span>
+                </div>
+                <input
+                  type="range"
+                  min={30}
+                  max={50}
+                  step={1}
+                  value={heatThreshold}
+                  onChange={(e) => setHeatThreshold(Number(e.target.value))}
+                  className="w-full h-1 bg-orange-400 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Wind (km/h)</span>
+                  <span className="text-purple-400">{windThreshold}</span>
+                </div>
+                <input
+                  type="range"
+                  min={20}
+                  max={80}
+                  step={5}
+                  value={windThreshold}
+                  onChange={(e) => setWindThreshold(Number(e.target.value))}
+                  className="w-full h-1 bg-purple-400 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-5 gap-2">
+              <MetricCard title="RAIN PEAK" value={rainPeak.peak.toFixed(1)} unit="mm/hr" className="!p-2 !text-sm" />
+              <MetricCard title="TEMP PEAK" value={metrics?.temp_peak?.toFixed(1) ?? "28.2"} unit="°C" className="!p-2 !text-sm" />
+              <MetricCard title="WIND PEAK" value={metrics?.wind_peak?.toFixed(1) ?? "22.0"} unit="km/h" className="!p-2 !text-sm" />
+              <MetricCard title="FLOOD RISK" value={((riskScores.Flood || 0) * 100).toFixed(1)} unit="%" className="!p-2 !text-sm" />
+              <MetricCard title="HIGH RISK ZONES" value={metrics?.high_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <MetricCard title="MEDIUM RISK ZONES" value={metrics?.medium_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
+              <MetricCard title="LOW RISK ZONES" value={metrics?.low_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Hazard Score Bars */}
       <div className="px-6 pb-6 grid grid-cols-4 gap-4">
         {Object.entries(riskScores).map(([hazard, score]) => (
           <div key={hazard} className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-5">
@@ -627,73 +669,6 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Forecast Horizon + Risk Thresholds - smaller */}
-      <div className="px-6 pt-2 pb-6 space-y-4">
-        <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-4">
-          <div className="text-xs uppercase tracking-widest text-zinc-400 mb-1">FORECAST HORIZON</div>
-          <div className="flex justify-between text-2xl font-bold mb-2">
-            <span>{forecastHours}</span>
-            <span className="text-amber-400 text-sm">HOURS</span>
-          </div>
-          <input type="range" min={24} max={120} step={6} value={forecastHours} onChange={(e) => setForecastHours(Number(e.target.value))} className="w-full h-1 bg-amber-400 rounded-lg appearance-none cursor-pointer" />
-        </div>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-4">
-            <div className="text-xs text-zinc-400 mb-1">RAIN (MM/HR)</div>
-            <div className="text-3xl font-bold text-amber-400 mb-1">{rainThreshold}</div>
-            <input type="range" min={20} max={150} value={rainThreshold} onChange={(e) => setRainThreshold(Number(e.target.value))} className="w-full h-1 bg-amber-400 rounded-lg appearance-none cursor-pointer mt-2" />
-          </div>
-          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-4">
-            <div className="text-xs text-zinc-400 mb-1">HEAT (°C)</div>
-            <div className="text-3xl font-bold text-orange-400 mb-1">{heatThreshold}</div>
-            <input type="range" min={25} max={50} value={heatThreshold} onChange={(e) => setHeatThreshold(Number(e.target.value))} className="w-full h-1 bg-orange-400 rounded-lg appearance-none cursor-pointer mt-2" />
-          </div>
-          <div className="bg-[#181b22] border border-[#3a4155] rounded-2xl p-4">
-            <div className="text-xs text-zinc-400 mb-1">WIND (KM/H)</div>
-            <div className="text-3xl font-bold text-purple-400 mb-1">{windThreshold}</div>
-            <input type="range" min={10} max={100} value={windThreshold} onChange={(e) => setWindThreshold(Number(e.target.value))} className="w-full h-1 bg-purple-400 rounded-lg appearance-none cursor-pointer mt-2" />
-          </div>
-        </div>
-      </div>
-
-      {/* Map + Action Cards Row (equal height, scrollable action cards) */}
-      <div className="flex-1 px-6 min-h-0 pb-6">
-        <div className="flex flex-col lg:flex-row gap-6 h-full">
-          {/* Map Section */}
-          <section className="flex-1 bg-zinc-900 rounded-3xl flex flex-col overflow-hidden min-h-0">
-            <div className="flex gap-2 p-4 border-b border-[#2a2f3d]">
-              {(["ALL", "FLOOD", "HEAT", "WIND", "LANDSLIDE"] as HazardType[]).map((h) => (
-                <button key={h} onClick={() => setHazard(h)} className={`px-6 py-2 rounded-full text-sm border transition-all ${hazard === h ? "bg-blue-600 border-blue-600 text-white" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>{h}</button>
-              ))}
-            </div>
-            <div className="flex gap-2 p-3 border-b border-[#2a2f3d]">
-              {(["all", "high", "medium", "low"] as SeverityFilter[]).map((s) => (
-                <button key={s} onClick={() => setSeverityFilter(s)} className={`px-4 py-1 text-xs rounded-full border transition-all ${severityFilter === s ? "bg-white text-black" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>{s.toUpperCase()}</button>
-              ))}
-            </div>
-            <div className="flex-1 relative min-h-0">
-              <ImpactMap actions={filteredActions} selectedActionId={selectedActionId} onSelectAction={setSelectedActionId} hazard={hazard} severityFilter={severityFilter} />
-            </div>
-          </section>
-
-          {/* Action Cards Panel */}
-          <section className="w-full lg:w-96 bg-zinc-900 rounded-3xl p-6 flex flex-col min-h-0">
-            <h2 className="text-lg font-semibold mb-4">Action Cards</h2>
-            <div className="flex gap-2 mb-4">
-              <span className="px-3 py-1 bg-red-500/20 text-red-400 rounded-full text-xs">🔴 {highActions.length} High</span>
-              <span className="px-3 py-1 bg-orange-500/20 text-orange-400 rounded-full text-xs">🟠 {mediumActions.length} Medium</span>
-              <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-xs">🟡 {lowActions.length} Low</span>
-            </div>
-            <div className="flex-1 overflow-y-auto space-y-3">
-              {sortedActions.map((action) => (
-                <ActionCard key={action.id} action={action} selected={selectedActionId === action.id} onClick={() => setSelectedActionId(action.id)} />
-              ))}
-            </div>
-          </section>
-        </div>
-      </div>
-
-      {/* Tabs */}
       <div className="px-6 pb-6">
         <div className="flex border-b border-[#2a2f3d] mb-6">
           {(["RECOMMENDATIONS", "FORECAST TIMESERIES", "RAW DATA", "EVALUATION AGENT", "AGENT TRACE"] as Tab[]).map((tab) => (
@@ -748,7 +723,7 @@ export default function Dashboard() {
                 responsive: true,
                 maintainAspectRatio: true,
                 scales: {
-                  y: { min: 0, max: 1, grid: { color: "#2a2f3d" }, ticks: { callback: (val) => { if (val === 0) return "LOW"; if (val === 0.25) return "MOD"; if (val === 0.5) return "HIGH"; if (val === 0.75) return "CRIT"; return ""; }, color: "#8a93a8" } },
+                  y: { min: 0, max: 1, grid: { color: "#2a2f3d" }, ticks: { callback: (val: any) => { if (val === 0) return "LOW"; if (val === 0.25) return "MOD"; if (val === 0.5) return "HIGH"; if (val === 0.75) return "CRIT"; return ""; }, color: "#8a93a8" } },
                   x: { ticks: { color: "#8a93a8", maxRotation: 45, autoSkip: true, maxTicksLimit: 8 }, grid: { color: "#2a2f3d" } }
                 },
                 plugins: { legend: { labels: { color: "#8a93a8" } }, tooltip: { mode: "index", intersect: false } }
@@ -825,7 +800,15 @@ export default function Dashboard() {
           <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl overflow-auto">
             <table className="w-full text-sm text-left">
               <thead className="bg-[#1e2230] text-zinc-300 text-xs font-mono">
-                <tr><th className="px-4 py-2">Time</th><th className="px-4 py-2">Rain Raw (mm)</th><th className="px-4 py-2">Rain Adj (mm)</th><th className="px-4 py-2">Temp (°C)</th><th className="px-4 py-2">Heat Index (°C)</th><th className="px-4 py-2">Wind (km/h)</th><th className="px-4 py-2">Flood Proxy</th></tr>
+                <tr>
+                  <th className="px-4 py-2">Time</th>
+                  <th className="px-4 py-2">Rain Raw (mm)</th>
+                  <th className="px-4 py-2">Rain Adj (mm)</th>
+                  <th className="px-4 py-2">Temp (°C)</th>
+                  <th className="px-4 py-2">Heat Index (°C)</th>
+                  <th className="px-4 py-2">Wind (km/h)</th>
+                  <th className="px-4 py-2">Flood Proxy</th>
+                </tr>
               </thead>
               <tbody>
                 {forecastData.slice(0, 48).map((row, idx) => (
@@ -854,29 +837,68 @@ export default function Dashboard() {
               <div className="bg-[#111318] border border-zinc-800 rounded-xl p-8 text-center text-zinc-400">Click "Run Evaluation" to train models and view metrics.</div>
             ) : (
               <div className="space-y-8">
-                {evaluationResults.map((res) => (
-                  <div key={res.hazard} className="bg-[#111318] border border-zinc-800 rounded-xl p-5">
-                    <h4 className="text-lg font-bold text-amber-400 mb-2">{res.display}</h4>
-                    <div className="grid grid-cols-4 gap-4 mb-4 text-xs"><div>Train: {res.n_train}</div><div>Test: {res.n_test}</div><div>Features: {res.features.length}</div>{res.task === "clf" && <div>Pos Rate: N/A</div>}{res.task === "reg" && <div>Baseline RMSE: N/A</div>}</div>
-                    <div className="space-y-2">
-                      <div className="text-sm font-mono text-zinc-400 mb-2">Model Comparison</div>
-                      {Object.entries(res.models).map(([name, metrics]) => (
-                        <div key={name} className="flex flex-wrap gap-3 text-xs bg-black/30 p-2 rounded"><span className="font-bold">{name === res.best_model && "★"} {name}</span>{res.task === "clf" ? (<> <span>AUC: {metrics.roc_auc?.toFixed(3)}</span> <span>F1: {metrics.f1?.toFixed(3)}</span> <span>Brier: {metrics.brier?.toFixed(3)}</span> <span>CV-AUC: {metrics.cv_auc_mean?.toFixed(3)}</span> </>) : (<> <span>R²: {metrics.r2?.toFixed(3)}</span> <span>RMSE: {metrics.rmse?.toFixed(2)}</span> <span>CV-R²: {metrics.cv_r2_mean?.toFixed(3)}</span> </>)}</div>
-                      ))}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {evaluationResults.map((res) => (
+                    <div key={res.display} className="bg-[#111318] border border-zinc-800 rounded-xl p-5">
+                      <h4 className="text-lg font-bold text-amber-400 mb-2">{res.display}</h4>
+                      <div className="grid grid-cols-2 gap-4 mb-4 text-xs">
+                        <div>Train: {res.n_train}</div>
+                        <div>Test: {res.n_test}</div>
+                        <div>Features: {res.features.length}</div>
+                        {res.task === "clf" && <div>Pos Rate: {res.pos_rate?.toFixed(3)}</div>}
+                        {res.task === "reg" && <div>Baseline RMSE: {res.baseline_rmse?.toFixed(2)}</div>}
+                      </div>
+                      <div className="space-y-2">
+                        <div className="text-sm font-mono text-zinc-400 mb-2">Model Comparison</div>
+                        {Object.entries(res.models).map(([name, metrics]) => (
+                          <div key={name} className="flex flex-wrap gap-3 text-xs bg-black/30 p-2 rounded">
+                            <span className="font-bold">{name === res.best && "★"} {name}</span>
+                            {res.task === "clf" ? (
+                              <>
+                                <span>AUC: {metrics.roc_auc?.toFixed(3)}</span>
+                                <span>F1: {metrics.f1?.toFixed(3)}</span>
+                                <span>Brier: {metrics.brier?.toFixed(3)}</span>
+                                <span>CV-AUC: {metrics.cv_auc_mean?.toFixed(3)}</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>R²: {metrics.r2?.toFixed(3)}</span>
+                                <span>RMSE: {metrics.rmse?.toFixed(2)}</span>
+                                <span>CV-R²: {metrics.cv_r2_mean?.toFixed(3)}</span>
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+
                 <div className="bg-[#111318] border border-zinc-800 rounded-xl p-5">
                   <h4 className="text-lg font-mono text-amber-400 mb-3">🏆 Model Leaderboard</h4>
                   <div className="space-y-2">
-                    {evaluationResults.map((res) => (
-                      <div key={res.hazard} className="flex items-center gap-3 text-sm">
-                        <div className="w-32">{res.display}</div>
-                        <div className="w-32 font-bold">{res.best_model}</div>
-                        <div className="flex-1 h-1 bg-zinc-800 rounded-full"><div className="h-1 rounded-full" style={{ width: `${(res.models[res.best_model]?.roc_auc || res.models[res.best_model]?.r2 || 0) * 100}%`, backgroundColor: res.task === "clf" ? "#f0a500" : "#00c9a7" }} /></div>
-                        <div className="w-20 text-right">{res.task === "clf" ? `AUC=${(res.models[res.best_model]?.roc_auc || 0).toFixed(3)}` : `R²=${(res.models[res.best_model]?.r2 || 0).toFixed(3)}`}</div>
-                      </div>
-                    ))}
+                    {evaluationResults.map((res) => {
+                      const bestModel = res.models[res.best];
+                      if (!bestModel) return null;
+                      const score = res.task === "clf" ? bestModel.roc_auc : bestModel.r2;
+                      const label = res.task === "clf" ? `AUC=${score?.toFixed(3)}` : `R²=${score?.toFixed(3)}`;
+                      return (
+                        <div key={res.display} className="flex items-center gap-3 text-sm">
+                          <div className="w-32">{res.display}</div>
+                          <div className="w-32 font-bold">{res.best}</div>
+                          <div className="flex-1 h-1 bg-zinc-800 rounded-full">
+                            <div
+                              className="h-1 rounded-full"
+                              style={{
+                                width: `${(score || 0) * 100}%`,
+                                backgroundColor: res.task === "clf" ? "#f0a500" : "#00c9a7",
+                              }}
+                            />
+                          </div>
+                          <div className="w-20 text-right">{label}</div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

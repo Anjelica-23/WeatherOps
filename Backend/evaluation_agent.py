@@ -18,7 +18,6 @@ from sklearn.metrics import (
 from imblearn.over_sampling import SMOTE
 from xgboost import XGBClassifier, XGBRegressor
 
-# Path to the feature table (adjust if needed)
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 CSV_PATH = DATA_DIR / "weatherops_feature_table.csv"
@@ -84,6 +83,19 @@ class EvaluationAgent:
         f["landslide"] = [c for c in ["elevation","aspect","soil_moisture"]
                            if c in df.columns]
         return f
+    
+    @staticmethod
+    def _sanitize(obj):
+        """Recursively replace nan/inf with None for JSON compliance."""
+        if isinstance(obj, dict):
+            return {k: EvaluationAgent._sanitize(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [EvaluationAgent._sanitize(v) for v in obj]
+        elif isinstance(obj, float):
+            if np.isnan(obj) or np.isinf(obj):
+                return None
+            return obj
+        return obj 
 
     def _clf_eval(self, name, model, Xtr, ytr, Xte, yte):
         sc = StandardScaler().fit(Xtr)
@@ -99,17 +111,29 @@ class EvaluationAgent:
         t_prob = model.predict_proba(Xtr_s)[:,1] if hasattr(model,"predict_proba") else model.decision_function(Xtr_s)
         thresh = self._youden_threshold(ytr, t_prob) if len(np.unique(ytr)) > 1 else 0.5
         yp = (prob >= thresh).astype(int)
-        res = {"name":name, "scaler":sc, "model":model, "y_pred":yp, "y_prob":prob, "thresh":thresh}
-        res["f1"]        = f1_score(yte, yp, zero_division=0)
-        res["precision"] = precision_score(yte, yp, zero_division=0)
-        res["recall"]    = recall_score(yte, yp, zero_division=0)
-        res["accuracy"]  = accuracy_score(yte, yp)
+
+        # Convert to native Python types
+        y_prob_list = prob.tolist()
+        y_pred_list = yp.tolist()
+
+        # Only keep serializable metrics
+        res = {
+            "name": name,
+            "y_pred": y_pred_list,
+            "y_prob": y_prob_list,
+            "thresh": float(thresh),
+            "f1": float(f1_score(yte, yp, zero_division=0)),
+            "precision": float(precision_score(yte, yp, zero_division=0)),
+            "recall": float(recall_score(yte, yp, zero_division=0)),
+            "accuracy": float(accuracy_score(yte, yp)),
+        }
         if len(np.unique(yte)) > 1:
-            res["roc_auc"]  = roc_auc_score(yte, prob)
-            res["avg_prec"] = average_precision_score(yte, prob)
-            res["brier"]    = brier_score_loss(yte, prob)
+            res["roc_auc"] = float(roc_auc_score(yte, prob))
+            res["avg_prec"] = float(average_precision_score(yte, prob))
+            res["brier"] = float(brier_score_loss(yte, prob))
         else:
             res["roc_auc"] = res["avg_prec"] = res["brier"] = float("nan")
+
         cv_aucs = []
         if len(np.unique(ytr)) > 1:
             skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -118,12 +142,12 @@ class EvaluationAgent:
                     m2 = type(model)(**model.get_params()) if hasattr(model,"get_params") else model
                     m2.fit(Xtr_s[tr_i], ytr[tr_i])
                     pr2 = m2.predict_proba(Xtr_s[te_i])[:,1] if hasattr(m2,"predict_proba") else m2.decision_function(Xtr_s[te_i])
-                    if len(np.unique(ytr[te_i]))>1:
+                    if len(np.unique(ytr[te_i])) > 1:
                         cv_aucs.append(roc_auc_score(ytr[te_i], pr2))
                 except:
                     pass
         res["cv_auc_mean"] = float(np.mean(cv_aucs)) if cv_aucs else float("nan")
-        res["cv_auc_std"]  = float(np.std(cv_aucs))  if cv_aucs else float("nan")
+        res["cv_auc_std"] = float(np.std(cv_aucs)) if cv_aucs else float("nan")
         return res
 
     def _reg_eval(self, name, model, Xtr, ytr, Xte, yte):
@@ -131,11 +155,18 @@ class EvaluationAgent:
         Xtr_s, Xte_s = sc.transform(Xtr), sc.transform(Xte)
         model.fit(Xtr_s, ytr)
         yp = model.predict(Xte_s)
-        res = {"name":name, "scaler":sc, "model":model, "y_pred":yp}
-        res["r2"]   = r2_score(yte, yp)
-        res["rmse"] = float(np.sqrt(mean_squared_error(yte, yp)))
-        res["mae"]  = float(mean_absolute_error(yte, yp))
-        res["mape"] = float(np.mean(np.abs((yte-yp)/(np.abs(yte)+1e-9)))*100)
+
+        # Convert to native Python types
+        y_pred_list = yp.tolist()
+
+        res = {
+            "name": name,
+            "y_pred": y_pred_list,
+            "r2": float(r2_score(yte, yp)),
+            "rmse": float(np.sqrt(mean_squared_error(yte, yp))),
+            "mae": float(mean_absolute_error(yte, yp)),
+            "mape": float(np.mean(np.abs((yte - yp) / (np.abs(yte) + 1e-9))) * 100),
+        }
         cv_r2s = []
         kf = KFold(n_splits=5, shuffle=True, random_state=42)
         for tr_i, te_i in kf.split(Xtr_s):
@@ -146,7 +177,7 @@ class EvaluationAgent:
             except:
                 pass
         res["cv_r2_mean"] = float(np.mean(cv_r2s)) if cv_r2s else float("nan")
-        res["cv_r2_std"]  = float(np.std(cv_r2s))  if cv_r2s else float("nan")
+        res["cv_r2_std"] = float(np.std(cv_r2s)) if cv_r2s else float("nan")
         res["baseline_rmse"] = float(ytr.std())
         return res
 
@@ -163,20 +194,20 @@ class EvaluationAgent:
         if "lon" not in df.columns:
             df["lon"] = np.linspace(77.95, 78.15, len(df))
 
-        targets   = self._make_targets(df)
+        targets = self._make_targets(df)
         feat_sets = self._make_features(df)
 
         hazards_cfg = [
-            ("flood",     "🌊 Flood",     "flood",  "clf"),
-            ("heat",      "🔥 Heat",      "heat",   "clf"),
-            ("wind",      "💨 Wind",      "wind",   "reg"),
-            ("landslide", "⛰ Landslide", "landslide","clf"),
+            ("flood", "🌊 Flood", "flood", "clf"),
+            ("heat", "🔥 Heat", "heat", "clf"),
+            ("wind", "💨 Wind", "wind", "reg"),
+            ("landslide", "⛰ Landslide", "landslide", "clf"),
         ]
 
         results = {}
         for step, (hkey, hname, tkey, task) in enumerate(hazards_cfg):
             if progress_cb:
-                progress_cb(step/4, f"Training {hname}…")
+                progress_cb(step / 4, f"Training {hname}…")
             if tkey not in targets:
                 results[hkey] = {"error": f"Cannot build target '{tkey}' — check column names in CSV"}
                 continue
@@ -185,7 +216,7 @@ class EvaluationAgent:
                 results[hkey] = {"error": f"No features found for {hkey}"}
                 continue
 
-            avail_cols = feats + ["lat","lon"]
+            avail_cols = feats + ["lat", "lon"]
             df_s = df[avail_cols].copy()
             tgt = targets[tkey]
             if isinstance(tgt, pd.Series):
@@ -203,17 +234,17 @@ class EvaluationAgent:
             try:
                 Xtr, Xte, ytr, yte, idx_tr, idx_te = self._spatial_split(df_s, X, y)
             except Exception:
-                strat = y if task=="clf" and len(np.unique(y))>1 else None
+                strat = y if task == "clf" and len(np.unique(y)) > 1 else None
                 Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42, stratify=strat)
                 idx_tr = np.arange(len(ytr))
                 idx_te = np.arange(len(ytr), len(y))
 
             if len(Xte) < 5:
-                strat = y if task=="clf" and len(np.unique(y))>1 else None
+                strat = y if task == "clf" and len(np.unique(y)) > 1 else None
                 Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42, stratify=strat)
 
             if task == "clf":
-                pos_w = max(1, (ytr==0).sum() / max(1, (ytr==1).sum()))
+                pos_w = max(1, (ytr == 0).sum() / max(1, (ytr == 1).sum()))
                 model_defs = {
                     "Logistic Regression": LogisticRegression(C=0.1, class_weight="balanced",
                                            max_iter=1000, random_state=42),
@@ -242,9 +273,9 @@ class EvaluationAgent:
                     "models": mr,
                     "best": best,
                     "features": feats,
-                    "y_te": yte.tolist(),
-                    "n_train": len(ytr),
-                    "n_test": len(yte),
+                    "y_te": [float(x) for x in yte.tolist()],
+                    "n_train": int(len(ytr)),
+                    "n_test": int(len(yte)),
                     "pos_rate": float(yte.mean())
                 }
             else:  # regression
@@ -271,12 +302,12 @@ class EvaluationAgent:
                     "models": mr,
                     "best": best,
                     "features": feats,
-                    "y_te": yte.tolist(),
-                    "n_train": len(ytr),
-                    "n_test": len(yte),
+                    "y_te": [float(x) for x in yte.tolist()],
+                    "n_train": int(len(ytr)),
+                    "n_test": int(len(yte)),
                     "baseline_rmse": float(ytr.std())
                 }
 
         if progress_cb:
             progress_cb(1.0, "Complete")
-        return results
+        return self._sanitize(results)

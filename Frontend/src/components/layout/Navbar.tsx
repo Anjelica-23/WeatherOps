@@ -2,48 +2,48 @@ import { NavLink } from "react-router-dom";
 
 interface NavbarProps {
   backendStatus?: "online" | "offline";
-  lastUpdated?: string;
   onExport?: () => void;
   isExporting?: boolean;
 }
 
 export default function Navbar({
   backendStatus = "online",
-  lastUpdated = "--",
   onExport,
   isExporting = false,
 }: NavbarProps) {
-  const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
   return (
-    <header className="bg-[#111318] border-b border-[#2a2f3d] px-6 py-3 flex items-center justify-between">
-      {/* Logo */}
+    <header className="sticky top-0 z-50 bg-[#111318] border-b border-[#2a2f3d] px-6 py-3 flex items-center justify-between">
       <div className="flex items-center gap-3">
         <span className="text-2xl">⛈️</span>
         <span className="text-2xl font-bold">WeatherOps</span>
       </div>
 
-      {/* Navigation */}
       <nav className="flex items-center gap-6">
         <NavLink
           to="/"
           className={({ isActive }) =>
             `px-3 py-1 rounded-md text-sm transition ${
-              isActive
-                ? "bg-blue-600 text-white"
-                : "text-zinc-400 hover:text-white"
+              isActive ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-white"
             }`
           }
         >
           Dashboard
         </NavLink>
         <NavLink
+          to="/map"
+          className={({ isActive }) =>
+            `px-3 py-1 rounded-md text-sm transition ${
+              isActive ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-white"
+            }`
+          }
+        >
+          Map View
+        </NavLink>
+        <NavLink
           to="/reports"
           className={({ isActive }) =>
             `px-3 py-1 rounded-md text-sm transition ${
-              isActive
-                ? "bg-blue-600 text-white"
-                : "text-zinc-400 hover:text-white"
+              isActive ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-white"
             }`
           }
         >
@@ -53,9 +53,7 @@ export default function Navbar({
           to="/about"
           className={({ isActive }) =>
             `px-3 py-1 rounded-md text-sm transition ${
-              isActive
-                ? "bg-blue-600 text-white"
-                : "text-zinc-400 hover:text-white"
+              isActive ? "bg-blue-600 text-white" : "text-zinc-400 hover:text-white"
             }`
           }
         >
@@ -63,14 +61,11 @@ export default function Navbar({
         </NavLink>
       </nav>
 
-      {/* Right‑hand info */}
       <div className="flex items-center gap-6 text-sm">
         <span className="text-emerald-400 flex items-center gap-1">
           <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
           System {backendStatus === "online" ? "Online" : "Offline"}
         </span>
-        <span className="font-mono">Now: {now}</span>
-        <span className="font-mono">Last Updated: {lastUpdated}</span>
         {onExport && (
           <button
             onClick={onExport}

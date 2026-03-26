@@ -8,7 +8,7 @@ import {
   GeoJSON,
 } from "react-leaflet";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import L from "leaflet";
 import type { ActionDecision } from "../../types/impact";
 import {
@@ -21,6 +21,9 @@ import axios from "axios";
 import "leaflet/dist/leaflet.css";
 import "./impactMap.css";
 
+// ============================================================
+// Helper: fly to selected action
+// ============================================================
 function FlyToAction({
   actions,
   selectedActionId,
@@ -41,6 +44,9 @@ function FlyToAction({
   return null;
 }
 
+// ============================================================
+// Pulse icon for high‑risk markers
+// ============================================================
 function createPulseIcon(color: string, size: number) {
   return L.divIcon({
     className: "",
@@ -75,6 +81,55 @@ const HAZARD_EMOJI: Record<string, string> = {
   LANDSLIDE: "⛰️",
 };
 
+// ============================================================
+// Block colors (exactly as in Streamlit app1(1)(1).py)
+// ============================================================
+const BLOCK_COLORS: Record<string, string> = {
+  "Tyuni":      "#f2a5b0",   // pink
+  "Chakrata":   "#f0a060",   // orange
+  "Kalsi":      "#60c8e8",   // light blue
+  "Vikasnagar": "#e8c840",   // yellow-gold
+  "Dehradun":   "#90d060",   // light green
+  "Doiwala":    "#c8e040",   // yellow-green
+  "Rishikesh":  "#a8d948",   // lime-green
+};
+
+// ============================================================
+// Helper: convert risk score (0-1) to colour and class name
+// ============================================================
+function riskColor(score: number): string {
+  if (score >= 0.75) return "#e84040";
+  if (score >= 0.50) return "#f06830";
+  if (score >= 0.25) return "#f0a500";
+  return "#00c9a7";
+}
+
+function riskLabel(score: number): string {
+  if (score >= 0.75) return "CRITICAL";
+  if (score >= 0.50) return "HIGH";
+  if (score >= 0.25) return "MODERATE";
+  return "LOW";
+}
+
+// ============================================================
+// Normalize block name to canonical key
+// ============================================================
+function normalizeBlockName(name: string): string {
+  if (!name) return "Dehradun";
+  const lower = name.toLowerCase().replace(/\s+/g, '');
+  if (lower.includes("tyuni")) return "Tyuni";
+  if (lower.includes("chakrata")) return "Chakrata";
+  if (lower.includes("kalsi")) return "Kalsi";
+  if (lower.includes("vikas")) return "Vikasnagar";
+  if (lower.includes("dehradun")) return "Dehradun";
+  if (lower.includes("doiwala")) return "Doiwala";
+  if (lower.includes("rishikesh")) return "Rishikesh";
+  return "Dehradun";
+}
+
+// ============================================================
+// Main component
+// ============================================================
 export default function ImpactMap({
   actions,
   selectedActionId,
@@ -92,61 +147,203 @@ export default function ImpactMap({
   const [blocks, setBlocks]           = useState<any>(null);
   const [blockRisk, setBlockRisk]     = useState<Record<string, any>>({});
 
+  // Fetch boundaries and block risk on mount
   useEffect(() => {
     fetchROIBoundary().then(setROIBoundary).catch(console.error);
     fetchDehradunBlocks().then(setBlocks).catch(console.error);
     axios
-      .get("https://weatherops-production.up.railway.app/api/block_risk")
+      .get("http://localhost:8000/api/block_risk")
       .then((res: any) => setBlockRisk(res.data))
       .catch(console.error);
   }, []);
 
-  const BLOCK_COLORS: Record<string, string> = {
-    "Chakrata":   "#8B3A2B",
-    "Kalsi":      "#8B3A2B",
-    "Vikasnagar": "#C2A83E",
-    "Doiwala":    "#1F7A6E",
-    "Raipur":     "#1F7A6E",
-    "Sahaspur":   "#1F7A6E",
-    "Dehradun":   "#1F7A6E",
+  // ============================================================
+  // Compute cluster statistics for blocks (like Streamlit)
+  // ============================================================
+  const tehsilClusters = useMemo(() => {
+    if (!blocks || !actions.length) return {};
+
+    // Build a dictionary: canonical block name -> { count, sumRisk }
+    const clusters: Record<string, { count: number; sumRisk: number }> = {};
+
+    // For each action location, find which block it falls into
+    actions.forEach((action) => {
+      action.locations.forEach((loc) => {
+        const point = L.latLng(loc.lat, loc.lon);
+        let owner: string | null = null;
+        for (const feature of blocks.features) {
+          const geom = feature.geometry;
+          if (isPointInPolygon(point, geom)) {
+            const rawName = feature.properties?.shapeName ||
+                            feature.properties?.block ||
+                            feature.properties?.name;
+            owner = normalizeBlockName(rawName);
+            break;
+          }
+        }
+        if (owner) {
+          if (!clusters[owner]) clusters[owner] = { count: 0, sumRisk: 0 };
+          // Use the average of confidence as risk score
+          const risk = (action.confidence[0] + action.confidence[1]) / 2;
+          clusters[owner].count++;
+          clusters[owner].sumRisk += risk;
+        }
+      });
+    });
+
+    // Compute average risk for each block
+    const result: Record<string, { count: number; avgRisk: number }> = {};
+    for (const [name, data] of Object.entries(clusters)) {
+      result[name] = {
+        count: data.count,
+        avgRisk: data.sumRisk / data.count,
+      };
+    }
+    return result;
+  }, [actions, blocks]);
+
+  // Simple point‑in‑polygon using Leaflet's geometry (handles Polygon and MultiPolygon)
+  function isPointInPolygon(point: L.LatLng, geom: any): boolean {
+    if (geom.type === "Polygon") {
+      return pointInPolygon(point, geom.coordinates[0]);
+    } else if (geom.type === "MultiPolygon") {
+      return geom.coordinates.some((poly: any) =>
+        pointInPolygon(point, poly[0])
+      );
+    }
+    return false;
+  }
+
+  function pointInPolygon(point: L.LatLng, ring: number[][]): boolean {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0], yi = ring[i][1];
+      const xj = ring[j][0], yj = ring[j][1];
+      const intersect = ((yi > point.lat) != (yj > point.lat)) &&
+        (point.lng < (xj - xi) * (point.lat - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  // ============================================================
+  // Style for GeoJSON blocks (dynamic fill opacity)
+  // ============================================================
+  const blockStyle = (feature: any) => {
+    const rawName = feature.properties?.shapeName ||
+                    feature.properties?.block ||
+                    feature.properties?.name;
+    const canonical = normalizeBlockName(rawName);
+    const fillColor = BLOCK_COLORS[canonical] || "#8a93a8";
+    const cluster = tehsilClusters[canonical];
+    const hasPoints = cluster && cluster.count > 0;
+    const fillOpacity = hasPoints ? 0.34 : 0.08;
+
+    return {
+      color: "#7a9af2",
+      weight: 0.5,
+      fillColor: fillColor,
+      fillOpacity: fillOpacity,
+    };
+  };
+
+  // ============================================================
+  // Tooltip for blocks (combining block info and hazard scores)
+  // ============================================================
+  const onEachBlock = (feature: any, layer: any) => {
+    const rawName = feature.properties?.shapeName ||
+                    feature.properties?.block ||
+                    feature.properties?.name ||
+                    "Block";
+    const canonical = normalizeBlockName(rawName);
+
+    const cluster = tehsilClusters[canonical] || { count: 0, avgRisk: 0 };
+    const br = blockRisk[canonical] || { flood: 0, heat: 0, wind: 0, landslide: 0 };
+
+    // Fixed area and villages (matching Streamlit's hardcoded values)
+    const blockInfo: Record<string, { area: string; villages: string; notes: string }> = {
+      "Tyuni":      { area: "520 km²", villages: "118", notes: "Upper Tons highland tehsil · remote ridge settlements" },
+      "Chakrata":   { area: "960 km²", villages: "294", notes: "Upper-mid highland tehsil · Jaunsar-Bawar terrain belt" },
+      "Kalsi":      { area: "267 km²", villages: "98", notes: "Transitional mid-hill tehsil · Yamuna-Tons corridor" },
+      "Vikasnagar": { area: "697 km²", villages: "231", notes: "Western valley tehsil · Herbertpur-Selaqui belt" },
+      "Dehradun":   { area: "790 km²", villages: "307", notes: "Central basin tehsil · urban core and peri-urban east" },
+      "Doiwala":    { area: "260 km²", villages: "95", notes: "South-western plains tehsil · Song-Suswa corridor" },
+      "Rishikesh":  { area: "312 km²", villages: "120", notes: "South-eastern tehsil · Ganga corridor and foothill floodplain" },
+    };
+    const info = blockInfo[canonical] || { area: "—", villages: "—", notes: "" };
+
+    const avgRisk = cluster.avgRisk || 0;
+    const pointCount = cluster.count || 0;
+
+    // Helper to format hazard rows
+    const hazardRows = (hazards: { name: string; emoji: string; score: number }[]) => {
+      return hazards
+        .map(({ name, emoji, score }) => {
+          const percent = Math.round(score * 100);
+          const color = riskColor(score);
+          return `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:11px;">${emoji}</span>
+                <span style="font-size:9px;color:#8a93a8;">${name}</span>
+              </div>
+              <div style="flex:1;margin:0 8px;height:4px;background:#1e2230;border-radius:2px;">
+                <div style="width:${percent}%;height:4px;background:${color};border-radius:2px;"></div>
+              </div>
+              <span style="font-size:9px;font-weight:600;color:${color};">${percent}%</span>
+            </div>
+          `;
+        })
+        .join("");
+    };
+
+    const hazardList = [
+      { name: "Flood", emoji: "🌊", score: br.flood || 0 },
+      { name: "Heat",  emoji: "🔥", score: br.heat  || 0 },
+      { name: "Wind",  emoji: "💨", score: br.wind  || 0 },
+      { name: "Landslide", emoji: "⛰", score: br.landslide || 0 },
+    ];
+
+    // Determine dominant hazard (the one with highest score)
+    let dominant = "";
+    let maxScore = 0;
+    for (const h of hazardList) {
+      if (h.score > maxScore) {
+        maxScore = h.score;
+        dominant = h.name;
+      }
+    }
+    const domColor = riskColor(maxScore);
+    const domLabel = riskLabel(maxScore);
+
+    const tooltipHtml = `
+      <div style="background:#111318;border:1px solid ${riskColor(avgRisk)};border-radius:6px;padding:10px 14px;min-width:210px;max-width:260px;">
+        <div style="font-size:13px;font-weight:700;color:${riskColor(avgRisk)};margin-bottom:5px;">${canonical} Tehsil</div>
+        <div style="font-size:9px;color:#8a93a8;margin-bottom:8px;line-height:1.6;">${info.notes}</div>
+        <div style="display:flex;justify-content:space-between;font-size:9px;">
+          <span style="color:#4e5568;">Area <b style="color:#8a93a8;">${info.area}</b></span>
+          <span style="color:#4e5568;">Villages <b style="color:#8a93a8;">${info.villages}</b></span>
+        </div>
+        <div style="margin-top:6px;font-size:9px;color:#4e5568;">
+          Avg Risk <b style="color:${riskColor(avgRisk)};">${avgRisk.toFixed(2)}</b>
+          · Points <b style="color:#8a93a8;">${pointCount}</b>
+        </div>
+        <hr style="border-color:#2a2f3d;margin:8px 0 4px;">
+        <div style="font-size:9px;color:#4e5568;margin-bottom:4px;">Hazard Risk</div>
+        ${hazardRows(hazardList)}
+        <hr style="border-color:#2a2f3d;margin:8px 0 4px;">
+        <div style="margin-top:5px;">
+          <span style="font-size:9px;color:#4e5568;">Dominant Risk: </span>
+          <span style="font-size:10px;font-weight:700;color:${domColor};">${dominant} — ${domLabel}</span>
+        </div>
+      </div>
+    `;
+
+    layer.bindTooltip(tooltipHtml, { sticky: true });
   };
 
   const highIcon    = createPulseIcon("#ff2244", 24);
   const highIconSel = createPulseIcon("#ff6680", 32);
-
-  // Build hazard rows HTML from blockRisk data for a given block name
-  function buildBlockTooltip(name: string): string {
-    const risk = blockRisk[name];
-
-    const hazardRows = risk && Object.keys(risk).length > 0 
-      ? Object.entries(risk)
-          .map(([hz, val]: [string, any]) => {
-            const emoji = HAZARD_EMOJI[hz.toUpperCase()] ?? "⚠️";
-            const score: number =
-              typeof val === "object" ? val?.score ?? val?.risk_score ?? 0 : Number(val);
-            const color =
-              score >= 70 ? "#ff2244" : score >= 40 ? "#ffcc00" : "#00e676"
-            return `
-              <div style="display:flex;justify-content:space-between;gap:12px;margin-top:3px">
-                <span>${emoji} ${hz}</span>
-                <strong style="color:${color}">${score}</strong>
-              </div>`;
-          })
-          .join("")
-      : `<div style="color:#666;margin-top:4px">No risk data</div>`;
-
-    return `
-      <div style="font-family:monospace;font-size:12px;line-height:1.6;min-width:180px">
-        <div style="font-weight:700;font-size:13px;color:#fff;margin-bottom:4px">
-          📦 ${name}
-        </div>
-        <hr style="border-color:#333;margin:4px 0"/>
-        <div style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px">
-          Hazard Risk
-        </div>
-        ${hazardRows}
-      </div>`;
-  }
 
   return (
     <div className="relative w-full h-full">
@@ -158,7 +355,7 @@ export default function ImpactMap({
         scrollWheelZoom={true}
         zoomAnimation={true}
         style={{ width: "100%", height: "100%" }}
-        maxBounds={[[29.8, 77.5], [30.9, 78.6]]}
+        maxBounds={[[29.7, 77.4], [31.2, 78.8]]}
         maxBoundsViscosity={0.2}
       >
         <TileLayer
@@ -168,37 +365,17 @@ export default function ImpactMap({
 
         {blocks && (
           <GeoJSON
-            key={JSON.stringify(blockRisk)} // 👈 re-renders when blockRisk loads
+            key={JSON.stringify(blockRisk) + JSON.stringify(tehsilClusters)}
             data={blocks}
-            style={(feature: any) => {
-              const name =
-                feature.properties?.shapeName ||
-                feature.properties?.block ||
-                feature.properties?.name;
-
-              return {
-                color: "#ffffff",
-                weight: 2,
-                fillColor: BLOCK_COLORS[name] || "#1F7A6E",
-                fillOpacity: 0.7,
-              };
-            }}
-            onEachFeature={(feature: any, layer: any) => {
-              const name =
-                feature.properties?.shapeName ||
-                feature.properties?.block ||
-                feature.properties?.name ||
-                "Block";
-
-              layer.bindTooltip(buildBlockTooltip(name), { sticky: true });
-            }}
+            style={blockStyle}
+            onEachFeature={onEachBlock}
           />
         )}
 
         {roiBoundary && (
           <GeoJSON
             data={roiBoundary}
-            style={{ color: "#00ffff", weight: 2, fillOpacity: 0 }}
+            style={{ color: "#00ffff", weight: 1.5, fillOpacity: 0, dashArray: "5, 5" }}
           />
         )}
 

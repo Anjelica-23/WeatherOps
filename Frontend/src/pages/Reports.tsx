@@ -1,43 +1,31 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { Line, Bar } from "react-chartjs-2";
+import { Bar, Pie } from "react-chartjs-2";
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
-  PointElement,
-  LineElement,
   BarElement,
   Title,
   Tooltip,
   Legend,
   Filler,
+  ArcElement,
 } from "chart.js";
 import { fetchMetrics, fetchDecisions, downloadReport } from "../services/api";
 import MetricCard from "../components/cards/MetricCard";
 import type { ActionDecision } from "../types/impact";
 
-// Register ChartJS components
 ChartJS.register(
   CategoryScale,
   LinearScale,
-  PointElement,
-  LineElement,
   BarElement,
   Title,
   Tooltip,
   Legend,
-  Filler
+  Filler,
+  ArcElement
 );
-
-// Types (simplified, can import from Dashboard if shared)
-interface RiskEvolution {
-  time: string[];
-  flood: number[];
-  heat: number[];
-  wind: number[];
-  landslide: number[];
-}
 
 interface BlockRisk {
   name: string;
@@ -47,43 +35,32 @@ interface BlockRisk {
   landslide: number;
 }
 
-const API_BASE = "https://weatherops-production.up.railway.app";
+const API_BASE = "weatherops-production.up.railway.app";
 
 export default function Reports() {
   const [metrics, setMetrics] = useState<any>(null);
-  const [riskEvolution, setRiskEvolution] = useState<RiskEvolution>({
-    time: [],
-    flood: [],
-    heat: [],
-    wind: [],
-    landslide: [],
-  });
   const [blockRisks, setBlockRisks] = useState<BlockRisk[]>([]);
   const [actions, setActions] = useState<ActionDecision[]>([]);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
 
-  // Fetch data on mount
   useEffect(() => {
     const fetchReportData = async () => {
       try {
-        const [metricsRes, decisionsRes, riskEvolRes, blockRiskRes] =
-          await Promise.all([
-            fetchMetrics(),
-            fetchDecisions({
-              forecast_hours: 72,
-              rain_thresh: 80,
-              temp_thresh: 35,
-              wind_thresh: 40,
-            }),
-            axios.get(`${API_BASE}/api/risk_evolution?horizon=72`),
-            axios.get(`${API_BASE}/api/block_risk`),
-          ]);
+        const [metricsRes, decisionsRes, blockRiskRes] = await Promise.all([
+          fetchMetrics(),
+          fetchDecisions({
+            forecast_hours: 72,
+            rain_thresh: 80,
+            temp_thresh: 35,
+            wind_thresh: 40,
+          }),
+          axios.get(`${API_BASE}/api/block_risk`),
+        ]);
 
         setMetrics(metricsRes);
         setActions(decisionsRes.actions || []);
-        setRiskEvolution(riskEvolRes.data);
-        // Convert blockRisk object to array for easier mapping
+
         if (blockRiskRes.data) {
           const blocksArray = Object.entries(blockRiskRes.data).map(
             ([name, risks]: [string, any]) => ({
@@ -125,50 +102,63 @@ export default function Reports() {
     }
   };
 
-  // Prepare risk evolution chart data
-  const riskEvolutionLabels = (riskEvolution?.time || []).map((t) =>
-    new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit" })
-  );
+  // Hazard scores for pie chart
+  const hazardScores = metrics?.hazard_scores || {
+    flood: 0,
+    heat: 0,
+    wind: 0,
+    landslide: 0,
+  };
 
-  const riskEvolutionData = {
-    labels: riskEvolutionLabels,
+  // Pie chart data – modern colors, centered
+  const pieData = {
+    labels: ["Flood", "Heat", "Wind", "Landslide"],
     datasets: [
       {
-        label: "Flood Risk",
-        data: riskEvolution.flood,
-        borderColor: "#00c9a7",
-        backgroundColor: "rgba(0,201,167,0.1)",
-        fill: true,
-        tension: 0.4,
-      },
-      {
-        label: "Heat Risk",
-        data: riskEvolution.heat,
-        borderColor: "#e84040",
-        backgroundColor: "rgba(232,64,64,0.1)",
-        fill: true,
-        tension: 0.4,
-      },
-      {
-        label: "Wind Risk",
-        data: riskEvolution.wind,
-        borderColor: "#f0a500",
-        backgroundColor: "rgba(240,165,0,0.1)",
-        fill: true,
-        tension: 0.4,
-      },
-      {
-        label: "Landslide Risk",
-        data: riskEvolution.landslide,
-        borderColor: "#a78bfa",
-        backgroundColor: "rgba(167,139,250,0.1)",
-        fill: true,
-        tension: 0.4,
+        data: [
+          hazardScores.flood,
+          hazardScores.heat,
+          hazardScores.wind,
+          hazardScores.landslide,
+        ],
+        backgroundColor: ["#2dd4bf", "#f97316", "#fbbf24", "#c084fc"],
+        borderColor: "#ffffff",
+        borderWidth: 2,
+        hoverOffset: 8,
       },
     ],
   };
 
-  // Prepare block risk bar chart data (top 8 blocks by average risk)
+  const pieOptions: any = {
+    responsive: true,
+    maintainAspectRatio: true,
+    plugins: {
+      legend: {
+        position: "bottom",
+        labels: {
+          color: "#8a93a8",
+          font: { size: 11, weight: "bold" },
+          usePointStyle: true,
+          pointStyle: "circle",
+        },
+      },
+      tooltip: {
+        callbacks: {
+          label: (ctx: any) => `${ctx.label}: ${ctx.raw.toFixed(1)}%`,
+        },
+        backgroundColor: "#111318",
+        titleColor: "#e8ecf4",
+        bodyColor: "#8a93a8",
+        borderColor: "#2a2f3d",
+        borderWidth: 1,
+      },
+    },
+    layout: {
+      padding: 10,
+    },
+  };
+
+  // Bar chart – top 8 blocks, matching colors
   const sortedBlocks = [...blockRisks]
     .map((b) => ({
       ...b,
@@ -183,63 +173,32 @@ export default function Reports() {
       {
         label: "Flood Risk (%)",
         data: sortedBlocks.map((b) => b.flood),
-        backgroundColor: "rgba(0,201,167,0.7)",
-        borderColor: "#00c9a7",
+        backgroundColor: "rgba(45,212,191,0.7)",
+        borderColor: "#2dd4bf",
         borderWidth: 1,
       },
       {
         label: "Wind Risk (%)",
         data: sortedBlocks.map((b) => b.wind),
-        backgroundColor: "rgba(240,165,0,0.7)",
-        borderColor: "#f0a500",
+        backgroundColor: "rgba(251,146,60,0.7)",
+        borderColor: "#f97316",
         borderWidth: 1,
       },
       {
         label: "Heat Risk (%)",
         data: sortedBlocks.map((b) => b.heat),
-        backgroundColor: "rgba(232,64,64,0.7)",
-        borderColor: "#e84040",
+        backgroundColor: "rgba(251,191,36,0.7)",
+        borderColor: "#fbbf24",
         borderWidth: 1,
       },
       {
         label: "Landslide Risk (%)",
         data: sortedBlocks.map((b) => b.landslide),
-        backgroundColor: "rgba(167,139,250,0.7)",
-        borderColor: "#a78bfa",
+        backgroundColor: "rgba(192,132,252,0.7)",
+        borderColor: "#c084fc",
         borderWidth: 1,
       },
     ],
-  };
-
-  // Chart options (cast to any to avoid TypeScript deep type mismatch)
-  const lineOptions: any = {
-    responsive: true,
-    maintainAspectRatio: true,
-    scales: {
-      y: {
-        min: 0,
-        max: 1,
-        grid: { color: "#2a2f3d" },
-        ticks: {
-          callback: (val: any) => {
-            if (val === 0) return "LOW";
-            if (val === 0.25) return "MOD";
-            if (val === 0.5) return "HIGH";
-            if (val === 0.75) return "CRIT";
-            return "";
-          },
-          color: "#8a93a8",
-        },
-      },
-      x: {
-        ticks: { color: "#8a93a8", maxRotation: 45, autoSkip: true, maxTicksLimit: 8 },
-        grid: { color: "#2a2f3d" },
-      },
-    },
-    plugins: {
-      legend: { labels: { color: "#8a93a8" } },
-      tooltip: { mode: "index", intersect: false },
-    },
   };
 
   const barOptions: any = {
@@ -257,7 +216,7 @@ export default function Reports() {
       },
     },
     plugins: {
-      legend: { labels: { color: "#8a93a8" } },
+      legend: { labels: { color: "#8a93a8", font: { size: 10 } } },
       tooltip: { mode: "index", intersect: false },
     },
   };
@@ -270,8 +229,10 @@ export default function Reports() {
     );
   }
 
+  const hasBlockData = sortedBlocks.length > 0;
+
   return (
-    <div className="bg-black text-white min-h-screen p-8">
+    <div className="h-screen bg-black text-white overflow-y-auto p-8">
       {/* Header */}
       <div className="flex justify-between items-center mb-8">
         <div>
@@ -290,7 +251,7 @@ export default function Reports() {
       </div>
 
       {/* Summary Metrics */}
-      <div className="grid grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-4 gap-4 mb-4">
         <MetricCard
           title="Rain Peak"
           value={metrics?.rain_peak?.toFixed(1) ?? "0.0"}
@@ -311,28 +272,60 @@ export default function Reports() {
           value={metrics?.flood_risk?.toFixed(1) ?? "0.0"}
           unit="%"
         />
+
+      </div>
+
+      <div className="grid grid-cols-3 gap-4 mb-8">
+
         <MetricCard
-          title="High Risk Zones"
-          value={metrics?.high_zones?.toString() ?? "0"}
+        title="High Risk Zones"
+        value={metrics?.high_zones?.toString() ?? "0"}
+        unit="zones"
+        />
+
+        <MetricCard
+          title="Medium Risk Zones"
+          value={metrics?.medium_zones?.toString() ?? "0"}
+          unit="zones"
+        />
+        <MetricCard
+          title="Low Risk Zones"
+          value={metrics?.low_zones?.toString() ?? "0"}
           unit="zones"
         />
       </div>
 
-      {/* Risk Evolution Chart */}
-      <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-6 mb-8">
-        <h2 className="text-xl font-semibold mb-4">Risk Evolution – 72‑Hour Forecast</h2>
-        <Line data={riskEvolutionData} options={lineOptions} height={300} />
+      {/* Two‑column layout: Pie Chart + Bar Chart */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        {/* Pie Chart – centered with modern colors */}
+        <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-4 flex flex-col items-center">
+          <h2 className="text-lg font-semibold mb-2 text-center">
+            Hazard Risk Distribution
+          </h2>
+          <div className="h-90 w-full max-w-sm mx-auto">
+            <Pie data={pieData} options={pieOptions} />
+          </div>
+          <p className="text-center text-xs text-zinc-500 mt-2">
+            Based on current forecast scores
+          </p>
+        </div>
+
+        {/* Bar Chart – compact */}
+        {hasBlockData ? (
+          <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-4">
+            <h2 className="text-lg font-semibold mb-2 text-center">
+              Block‑Level Risk Breakdown
+            </h2>
+            <Bar data={barChartData} options={barOptions} height={200} />
+          </div>
+        ) : (
+          <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-6 text-center text-zinc-400">
+            No block risk data available.
+          </div>
+        )}
       </div>
 
-      {/* Block Risk Bar Chart */}
-      {sortedBlocks.length > 0 && (
-        <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-6 mb-8">
-          <h2 className="text-xl font-semibold mb-4">Block‑Level Risk Breakdown</h2>
-          <Bar data={barChartData} options={barOptions} height={350} />
-        </div>
-      )}
-
-      {/* Top Recommended Actions */}
+      {/* Priority Actions */}
       <div className="bg-[#111318] border border-[#2a2f3d] rounded-xl p-6">
         <h2 className="text-xl font-semibold mb-4">Priority Actions</h2>
         {actions.length === 0 ? (
