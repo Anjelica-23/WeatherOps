@@ -624,14 +624,14 @@ export default function Dashboard() {
           </div>
 
           <div className="flex flex-col gap-2">
-            <div className="grid grid-cols-5 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               <MetricCard title="RAIN PEAK" value={rainPeak.peak.toFixed(1)} unit="mm/hr" className="!p-2 !text-sm" />
               <MetricCard title="TEMP PEAK" value={metrics?.temp_peak?.toFixed(1) ?? "28.2"} unit="°C" className="!p-2 !text-sm" />
               <MetricCard title="WIND PEAK" value={metrics?.wind_peak?.toFixed(1) ?? "22.0"} unit="km/h" className="!p-2 !text-sm" />
               <MetricCard title="FLOOD RISK" value={((riskScores.Flood || 0) * 100).toFixed(1)} unit="%" className="!p-2 !text-sm" />
-              <MetricCard title="HIGH RISK ZONES" value={metrics?.high_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
+              <MetricCard title="HIGH RISK ZONES" value={metrics?.high_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
               <MetricCard title="MEDIUM RISK ZONES" value={metrics?.medium_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
               <MetricCard title="LOW RISK ZONES" value={metrics?.low_zones ?? "0"} unit="zones" className="!p-2 !text-sm" />
             </div>
