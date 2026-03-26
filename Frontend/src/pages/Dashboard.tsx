@@ -1,3 +1,4 @@
+// pages/Dashboard.tsx
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { fetchDecisions, fetchMetrics } from "../services/api";
@@ -57,7 +58,7 @@ interface EvaluationResult {
   task: "clf" | "reg";
   n_train: number;
   n_test: number;
-   best: string; 
+  best: string;
   models: Record<string, any>;
   features: string[];
   roc_data?: { fpr: number[]; tpr: number[]; auc: number };
@@ -71,6 +72,7 @@ interface AgentStep {
   message: string;
   status: "ok" | "warn" | "err";
 }
+
 const SEASONAL_RISKS: Record<number, SeasonalContext> = {
   1: {
     month: 1,
@@ -258,13 +260,6 @@ const PREVENTIVE_ACTIONS: Record<string, Record<string, string[]>> = {
   },
 };
 
-function getLevel(val: number): string {
-  if (val >= 0.75) return "CRITICAL";
-  if (val >= 0.5) return "HIGH";
-  if (val >= 0.25) return "MODERATE";
-  return "LOW";
-}
-
 function getRiskColor(score: number): string {
   if (score >= 0.75) return "#e84040";
   if (score >= 0.5) return "#f06830";
@@ -444,7 +439,6 @@ export default function Dashboard() {
   const [windThreshold, setWindThreshold] = useState(40);
 
   const [metrics, setMetrics] = useState<any>(null);
-  const [blockRisk, setBlockRisk] = useState<Record<string, any>>({});
   const [forecastData, setForecastData] = useState<ForecastPoint[]>([]);
   const [riskEvolution, setRiskEvolution] = useState<RiskEvolution>({
     time: [], flood: [], heat: [], wind: [], landslide: [],
@@ -456,21 +450,22 @@ export default function Dashboard() {
   const [riskCIs, setRiskCIs] = useState<Record<string, [number, number]>>({
     Flood: [0, 0], Heat: [0, 0], Wind: [0, 0], Landslide: [0, 0],
   });
+  const [tehsilDetails, setTehsilDetails] = useState<any[]>([]);
 
   const loadAllData = async () => {
     try {
-      const [metricsRes, decisionsRes, blockRiskRes, forecastRes, riskEvolRes, traceRes] = await Promise.all([
+      const [metricsRes, decisionsRes, forecastRes, riskEvolRes, traceRes, tehsilRes] = await Promise.all([
         fetchMetrics(),
         fetchDecisions({ forecast_hours: forecastHours, rain_thresh: rainThreshold, temp_thresh: heatThreshold, wind_thresh: windThreshold }),
-        axios.get(`${API_BASE}/api/block_risk`),
         axios.get(`${API_BASE}/api/forecast`),
         axios.get(`${API_BASE}/api/risk_evolution`),
         axios.get(`${API_BASE}/api/agent_trace`),
+        axios.get(`${API_BASE}/api/tehsil_details`),
       ]);
 
       setMetrics(metricsRes);
-      setBlockRisk(blockRiskRes.data);
       setForecastData(forecastRes.data?.forecast || forecastRes.data || []);
+      setTehsilDetails(tehsilRes.data);
 
       const evolData = riskEvolRes.data;
       if (Array.isArray(evolData) && evolData.length > 0) {
@@ -517,14 +512,6 @@ export default function Dashboard() {
       setEvaluating(false);
     }
   };
-
-  const blockRiskData = Object.keys(blockRisk || {}).map((name) => ({
-    name,
-    flood: getLevel(blockRisk[name]?.flood || 0),
-    heat: getLevel(blockRisk[name]?.heat || 0),
-    wind: getLevel(blockRisk[name]?.wind || 0),
-    landslide: getLevel(blockRisk[name]?.landslide || 0),
-  }));
 
   const recommendations = forecastData.length > 0 ? buildRecommendations(forecastData, riskScores, riskCIs, forecastHours) : [];
 
@@ -828,7 +815,7 @@ export default function Dashboard() {
         {activeTab === "EVALUATION AGENT" && (
           <div>
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-lg font-mono text-amber-400">Agent 05 · Statistical Model Evaluation</h3>
+              <h3 className="text-lg font-mono text-amber-400">Agent 05 · Model Evaluation</h3>
               <button onClick={runEvaluation} disabled={evaluating} className="bg-amber-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-700 transition">{evaluating ? "Training..." : "▶ Run Evaluation"}</button>
             </div>
             {evaluationResults.length === 0 ? (
@@ -922,8 +909,9 @@ export default function Dashboard() {
         )}
       </div>
 
+      {/* Tehsil cards – only the 7 from the backend */}
       <div className="px-6 pb-8">
-        <BlockRiskGrid data={blockRiskData} />
+        <BlockRiskGrid tehsils={tehsilDetails} />
       </div>
     </div>
   );

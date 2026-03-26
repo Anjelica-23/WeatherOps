@@ -1,3 +1,4 @@
+// components/ImpactMap.tsx
 import {
   MapContainer,
   TileLayer,
@@ -19,8 +20,9 @@ import {
 import axios from "axios";
 
 import "leaflet/dist/leaflet.css";
+import "leaflet.heat";
 import "./impactMap.css";
-import { API_BASE } from "../../config"; 
+import { API_BASE } from "../../config";
 
 // ============================================================
 // Helper: fly to selected action
@@ -41,6 +43,28 @@ function FlyToAction({
     const { lat, lon } = action.locations[0];
     map.flyTo([lat, lon], 13, { duration: 1.2 });
   }, [selectedActionId, actions, map]);
+
+  return null;
+}
+
+// ============================================================
+// Heatmap Layer Component
+// ============================================================
+function HeatmapLayer({ visible, points }: { visible: boolean; points: [number, number, number][] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    let heatLayer: L.HeatLayer | null = null;
+    if (visible && points.length > 0) {
+      heatLayer = L.heatLayer(points, { radius: 25, blur: 15, maxZoom: 17 });
+      heatLayer.addTo(map);
+    }
+    return () => {
+      if (heatLayer) {
+        map.removeLayer(heatLayer);
+      }
+    };
+  }, [visible, points, map]);
 
   return null;
 }
@@ -70,54 +94,51 @@ function createPulseIcon(color: string, size: number) {
           box-shadow:0 0 8px ${color};
         "></div>
       </div>`,
-    iconSize:   [size, size],
+    iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
   });
 }
 
 const HAZARD_EMOJI: Record<string, string> = {
-  FLOOD:     "🌊",
-  HEAT:      "🔥",
-  WIND:      "💨",
+  FLOOD: "🌊",
+  HEAT: "🔥",
+  WIND: "💨",
   LANDSLIDE: "⛰️",
 };
 
 // ============================================================
-// Block colors (exactly as in Streamlit app1(1)(1).py)
+// Block colors (exactly as in Streamlit)
 // ============================================================
 const BLOCK_COLORS: Record<string, string> = {
-  "Tyuni":      "#f2a5b0",   // pink
-  "Chakrata":   "#f0a060",   // orange
-  "Kalsi":      "#60c8e8",   // light blue
-  "Vikasnagar": "#e8c840",   // yellow-gold
-  "Dehradun":   "#90d060",   // light green
-  "Doiwala":    "#c8e040",   // yellow-green
-  "Rishikesh":  "#a8d948",   // lime-green
+  Tyuni: "#f2a5b0",
+  Chakrata: "#f0a060",
+  Kalsi: "#60c8e8",
+  Vikasnagar: "#e8c840",
+  Dehradun: "#90d060",
+  Doiwala: "#c8e040",
+  Rishikesh: "#a8d948",
 };
 
 // ============================================================
-// Helper: convert risk score (0-1) to colour and class name
+// Helper: convert risk score (0-1) to colour
 // ============================================================
 function riskColor(score: number): string {
   if (score >= 0.75) return "#e84040";
-  if (score >= 0.50) return "#f06830";
+  if (score >= 0.5) return "#f06830";
   if (score >= 0.25) return "#f0a500";
   return "#00c9a7";
 }
 
 function riskLabel(score: number): string {
   if (score >= 0.75) return "CRITICAL";
-  if (score >= 0.50) return "HIGH";
+  if (score >= 0.5) return "HIGH";
   if (score >= 0.25) return "MODERATE";
   return "LOW";
 }
 
-// ============================================================
-// Normalize block name to canonical key
-// ============================================================
 function normalizeBlockName(name: string): string {
   if (!name) return "Dehradun";
-  const lower = name.toLowerCase().replace(/\s+/g, '');
+  const lower = name.toLowerCase().replace(/\s+/g, "");
   if (lower.includes("tyuni")) return "Tyuni";
   if (lower.includes("chakrata")) return "Chakrata";
   if (lower.includes("kalsi")) return "Kalsi";
@@ -145,8 +166,12 @@ export default function ImpactMap({
   severityFilter: "all" | "high" | "medium" | "low";
 }) {
   const [roiBoundary, setROIBoundary] = useState<any>(null);
-  const [blocks, setBlocks]           = useState<any>(null);
-  const [blockRisk, setBlockRisk]     = useState<Record<string, any>>({});
+  const [blocks, setBlocks] = useState<any>(null);
+  const [blockRisk, setBlockRisk] = useState<Record<string, any>>({});
+
+  // Heatmap state
+  const [heatmapVisible, setHeatmapVisible] = useState(false);
+  const [heatmapPoints, setHeatmapPoints] = useState<[number, number, number][]>([]);
 
   // Fetch boundaries and block risk on mount
   useEffect(() => {
@@ -158,16 +183,27 @@ export default function ImpactMap({
       .catch(console.error);
   }, []);
 
+  // Fetch heatmap points (500 points with risk)
+  useEffect(() => {
+    axios
+      .get(`${API_BASE}/api/flood_heatmap`)
+      .then((res) => {
+        const points = res.data.points;
+        // Use flood risk (prob) as intensity. You could also average all hazards.
+        const heatPoints = points.map((p: any) => [p.lat, p.lon, p.prob]);
+        setHeatmapPoints(heatPoints);
+      })
+      .catch(console.error);
+  }, []);
+
   // ============================================================
   // Compute cluster statistics for blocks (like Streamlit)
   // ============================================================
   const tehsilClusters = useMemo(() => {
     if (!blocks || !actions.length) return {};
 
-    // Build a dictionary: canonical block name -> { count, sumRisk }
     const clusters: Record<string, { count: number; sumRisk: number }> = {};
 
-    // For each action location, find which block it falls into
     actions.forEach((action) => {
       action.locations.forEach((loc) => {
         const point = L.latLng(loc.lat, loc.lon);
@@ -175,16 +211,16 @@ export default function ImpactMap({
         for (const feature of blocks.features) {
           const geom = feature.geometry;
           if (isPointInPolygon(point, geom)) {
-            const rawName = feature.properties?.shapeName ||
-                            feature.properties?.block ||
-                            feature.properties?.name;
+            const rawName =
+              feature.properties?.shapeName ||
+              feature.properties?.block ||
+              feature.properties?.name;
             owner = normalizeBlockName(rawName);
             break;
           }
         }
         if (owner) {
           if (!clusters[owner]) clusters[owner] = { count: 0, sumRisk: 0 };
-          // Use the average of confidence as risk score
           const risk = (action.confidence[0] + action.confidence[1]) / 2;
           clusters[owner].count++;
           clusters[owner].sumRisk += risk;
@@ -192,7 +228,6 @@ export default function ImpactMap({
       });
     });
 
-    // Compute average risk for each block
     const result: Record<string, { count: number; avgRisk: number }> = {};
     for (const [name, data] of Object.entries(clusters)) {
       result[name] = {
@@ -203,14 +238,11 @@ export default function ImpactMap({
     return result;
   }, [actions, blocks]);
 
-  // Simple point‑in‑polygon using Leaflet's geometry (handles Polygon and MultiPolygon)
   function isPointInPolygon(point: L.LatLng, geom: any): boolean {
     if (geom.type === "Polygon") {
       return pointInPolygon(point, geom.coordinates[0]);
     } else if (geom.type === "MultiPolygon") {
-      return geom.coordinates.some((poly: any) =>
-        pointInPolygon(point, poly[0])
-      );
+      return geom.coordinates.some((poly: any) => pointInPolygon(point, poly[0]));
     }
     return false;
   }
@@ -218,22 +250,23 @@ export default function ImpactMap({
   function pointInPolygon(point: L.LatLng, ring: number[][]): boolean {
     let inside = false;
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const xi = ring[i][0], yi = ring[i][1];
-      const xj = ring[j][0], yj = ring[j][1];
-      const intersect = ((yi > point.lat) != (yj > point.lat)) &&
-        (point.lng < (xj - xi) * (point.lat - yi) / (yj - yi) + xi);
+      const xi = ring[i][0],
+        yi = ring[i][1];
+      const xj = ring[j][0],
+        yj = ring[j][1];
+      const intersect =
+        yi > point.lat != yj > point.lat &&
+        point.lng < ((xj - xi) * (point.lat - yi)) / (yj - yi) + xi;
       if (intersect) inside = !inside;
     }
     return inside;
   }
 
-  // ============================================================
-  // Style for GeoJSON blocks (dynamic fill opacity)
-  // ============================================================
   const blockStyle = (feature: any) => {
-    const rawName = feature.properties?.shapeName ||
-                    feature.properties?.block ||
-                    feature.properties?.name;
+    const rawName =
+      feature.properties?.shapeName ||
+      feature.properties?.block ||
+      feature.properties?.name;
     const canonical = normalizeBlockName(rawName);
     const fillColor = BLOCK_COLORS[canonical] || "#8a93a8";
     const cluster = tehsilClusters[canonical];
@@ -248,35 +281,59 @@ export default function ImpactMap({
     };
   };
 
-  // ============================================================
-  // Tooltip for blocks (combining block info and hazard scores)
-  // ============================================================
   const onEachBlock = (feature: any, layer: any) => {
-    const rawName = feature.properties?.shapeName ||
-                    feature.properties?.block ||
-                    feature.properties?.name ||
-                    "Block";
+    const rawName =
+      feature.properties?.shapeName ||
+      feature.properties?.block ||
+      feature.properties?.name ||
+      "Block";
     const canonical = normalizeBlockName(rawName);
 
     const cluster = tehsilClusters[canonical] || { count: 0, avgRisk: 0 };
     const br = blockRisk[canonical] || { flood: 0, heat: 0, wind: 0, landslide: 0 };
 
-    // Fixed area and villages (matching Streamlit's hardcoded values)
     const blockInfo: Record<string, { area: string; villages: string; notes: string }> = {
-      "Tyuni":      { area: "520 km²", villages: "118", notes: "Upper Tons highland tehsil · remote ridge settlements" },
-      "Chakrata":   { area: "960 km²", villages: "294", notes: "Upper-mid highland tehsil · Jaunsar-Bawar terrain belt" },
-      "Kalsi":      { area: "267 km²", villages: "98", notes: "Transitional mid-hill tehsil · Yamuna-Tons corridor" },
-      "Vikasnagar": { area: "697 km²", villages: "231", notes: "Western valley tehsil · Herbertpur-Selaqui belt" },
-      "Dehradun":   { area: "790 km²", villages: "307", notes: "Central basin tehsil · urban core and peri-urban east" },
-      "Doiwala":    { area: "260 km²", villages: "95", notes: "South-western plains tehsil · Song-Suswa corridor" },
-      "Rishikesh":  { area: "312 km²", villages: "120", notes: "South-eastern tehsil · Ganga corridor and foothill floodplain" },
+      Tyuni: {
+        area: "520 km²",
+        villages: "118",
+        notes: "Upper Tons highland tehsil · remote ridge settlements",
+      },
+      Chakrata: {
+        area: "960 km²",
+        villages: "294",
+        notes: "Upper-mid highland tehsil · Jaunsar-Bawar terrain belt",
+      },
+      Kalsi: {
+        area: "267 km²",
+        villages: "98",
+        notes: "Transitional mid-hill tehsil · Yamuna-Tons corridor",
+      },
+      Vikasnagar: {
+        area: "697 km²",
+        villages: "231",
+        notes: "Western valley tehsil · Herbertpur-Selaqui belt",
+      },
+      Dehradun: {
+        area: "790 km²",
+        villages: "307",
+        notes: "Central basin tehsil · urban core and peri-urban east",
+      },
+      Doiwala: {
+        area: "260 km²",
+        villages: "95",
+        notes: "South-western plains tehsil · Song-Suswa corridor",
+      },
+      Rishikesh: {
+        area: "312 km²",
+        villages: "120",
+        notes: "South-eastern tehsil · Ganga corridor and foothill floodplain",
+      },
     };
     const info = blockInfo[canonical] || { area: "—", villages: "—", notes: "" };
 
     const avgRisk = cluster.avgRisk || 0;
     const pointCount = cluster.count || 0;
 
-    // Helper to format hazard rows
     const hazardRows = (hazards: { name: string; emoji: string; score: number }[]) => {
       return hazards
         .map(({ name, emoji, score }) => {
@@ -300,12 +357,11 @@ export default function ImpactMap({
 
     const hazardList = [
       { name: "Flood", emoji: "🌊", score: br.flood || 0 },
-      { name: "Heat",  emoji: "🔥", score: br.heat  || 0 },
-      { name: "Wind",  emoji: "💨", score: br.wind  || 0 },
+      { name: "Heat", emoji: "🔥", score: br.heat || 0 },
+      { name: "Wind", emoji: "💨", score: br.wind || 0 },
       { name: "Landslide", emoji: "⛰", score: br.landslide || 0 },
     ];
 
-    // Determine dominant hazard (the one with highest score)
     let dominant = "";
     let maxScore = 0;
     for (const h of hazardList) {
@@ -318,15 +374,27 @@ export default function ImpactMap({
     const domLabel = riskLabel(maxScore);
 
     const tooltipHtml = `
-      <div style="background:#111318;border:1px solid ${riskColor(avgRisk)};border-radius:6px;padding:10px 14px;min-width:210px;max-width:260px;">
-        <div style="font-size:13px;font-weight:700;color:${riskColor(avgRisk)};margin-bottom:5px;">${canonical} Tehsil</div>
-        <div style="font-size:9px;color:#8a93a8;margin-bottom:8px;line-height:1.6;">${info.notes}</div>
+      <div style="background:#111318;border:1px solid ${riskColor(
+        avgRisk
+      )};border-radius:6px;padding:10px 14px;min-width:210px;max-width:260px;">
+        <div style="font-size:13px;font-weight:700;color:${riskColor(
+          avgRisk
+        )};margin-bottom:5px;">${canonical} Tehsil</div>
+        <div style="font-size:9px;color:#8a93a8;margin-bottom:8px;line-height:1.6;">${
+          info.notes
+        }</div>
         <div style="display:flex;justify-content:space-between;font-size:9px;">
-          <span style="color:#4e5568;">Area <b style="color:#8a93a8;">${info.area}</b></span>
-          <span style="color:#4e5568;">Villages <b style="color:#8a93a8;">${info.villages}</b></span>
+          <span style="color:#4e5568;">Area <b style="color:#8a93a8;">${
+            info.area
+          }</b></span>
+          <span style="color:#4e5568;">Villages <b style="color:#8a93a8;">${
+            info.villages
+          }</b></span>
         </div>
         <div style="margin-top:6px;font-size:9px;color:#4e5568;">
-          Avg Risk <b style="color:${riskColor(avgRisk)};">${avgRisk.toFixed(2)}</b>
+          Avg Risk <b style="color:${riskColor(avgRisk)};">${avgRisk.toFixed(
+      2
+    )}</b>
           · Points <b style="color:#8a93a8;">${pointCount}</b>
         </div>
         <hr style="border-color:#2a2f3d;margin:8px 0 4px;">
@@ -343,7 +411,7 @@ export default function ImpactMap({
     layer.bindTooltip(tooltipHtml, { sticky: true });
   };
 
-  const highIcon    = createPulseIcon("#ff2244", 24);
+  const highIcon = createPulseIcon("#ff2244", 24);
   const highIconSel = createPulseIcon("#ff6680", 32);
 
   return (
@@ -356,7 +424,10 @@ export default function ImpactMap({
         scrollWheelZoom={true}
         zoomAnimation={true}
         style={{ width: "100%", height: "100%" }}
-        maxBounds={[[29.7, 77.4], [31.2, 78.8]]}
+        maxBounds={[
+          [29.7, 77.4],
+          [31.2, 78.8],
+        ]}
         maxBoundsViscosity={0.2}
       >
         <TileLayer
@@ -376,7 +447,12 @@ export default function ImpactMap({
         {roiBoundary && (
           <GeoJSON
             data={roiBoundary}
-            style={{ color: "#00ffff", weight: 1.5, fillOpacity: 0, dashArray: "5, 5" }}
+            style={{
+              color: "#00ffff",
+              weight: 1.5,
+              fillOpacity: 0,
+              dashArray: "5, 5",
+            }}
           />
         )}
 
@@ -384,12 +460,10 @@ export default function ImpactMap({
 
         {actions.flatMap((action) =>
           action.locations
-            .filter((loc) =>
-              severityFilter === "all" || loc.severity === severityFilter
-            )
+            .filter((loc) => severityFilter === "all" || loc.severity === severityFilter)
             .map((loc) => {
-              const isSelected   = selectedActionId === action.id;
-              const emoji        = HAZARD_EMOJI[action.hazard?.toUpperCase()] ?? "⚠️";
+              const isSelected = selectedActionId === action.id;
+              const emoji = HAZARD_EMOJI[action.hazard?.toUpperCase()] ?? "⚠️";
               const locationName = loc.location_name || action.where || "Dehradun Zone";
 
               const tooltipContent = `
@@ -409,15 +483,20 @@ export default function ImpactMap({
                   </div>
                   <div style="margin-top:2px">
                     Severity: <strong style="color:${
-                      loc.severity === "high"   ? "#ff2244" :
-                      loc.severity === "medium" ? "#ffcc00" : "#00e676"
+                      loc.severity === "high"
+                        ? "#ff2244"
+                        : loc.severity === "medium"
+                        ? "#ffcc00"
+                        : "#00e676"
                     }">${loc.severity.toUpperCase()}</strong>
                   </div>
                   <div style="color:#aaa;font-size:11px;margin-top:2px">
                     ⏱ ${action.when}
                   </div>
                   <div style="color:#aaa;font-size:11px">
-                    Confidence: ${Math.round(action.confidence[0] * 100)}–${Math.round(action.confidence[1] * 100)}%
+                    Confidence: ${Math.round(action.confidence[0] * 100)}–${Math.round(
+                action.confidence[1] * 100
+              )}%
                   </div>
                 </div>`;
 
@@ -437,7 +516,7 @@ export default function ImpactMap({
                 );
               }
 
-              const color  = loc.severity === "medium" ? "#ffcc00" : "#00e676";
+              const color = loc.severity === "medium" ? "#ffcc00" : "#00e676";
               const radius = isSelected ? 9 : loc.severity === "medium" ? 6 : 5;
 
               return (
@@ -460,24 +539,52 @@ export default function ImpactMap({
               );
             })
         )}
+
+        {/* Heatmap layer */}
+        <HeatmapLayer visible={heatmapVisible} points={heatmapPoints} />
       </MapContainer>
 
+      {/* Legend panel (bottom-left) */}
       <div className="absolute bottom-4 left-4 z-[1000] bg-black/85 text-white text-xs rounded-lg p-3 border border-zinc-700 backdrop-blur-sm">
         <div className="font-semibold mb-2 uppercase tracking-widest text-zinc-400 text-[10px]">
           {hazard} · {severityFilter === "all" ? "All Severity" : severityFilter.toUpperCase()}
         </div>
-        <div className={`flex items-center gap-2 mb-1.5 transition ${severityFilter !== "all" && severityFilter !== "high" ? "opacity-30" : ""}`}>
+        <div
+          className={`flex items-center gap-2 mb-1.5 transition ${
+            severityFilter !== "all" && severityFilter !== "high" ? "opacity-30" : ""
+          }`}
+        >
           <span className="w-3 h-3 rounded-full bg-[#ff2244] shadow-[0_0_8px_#ff2244] animate-pulse" />
           <span>High — pulsating</span>
         </div>
-        <div className={`flex items-center gap-2 mb-1.5 transition ${severityFilter !== "all" && severityFilter !== "medium" ? "opacity-30" : ""}`}>
+        <div
+          className={`flex items-center gap-2 mb-1.5 transition ${
+            severityFilter !== "all" && severityFilter !== "medium" ? "opacity-30" : ""
+          }`}
+        >
           <span className="w-3 h-3 rounded-full bg-[#ffcc00] shadow-[0_0_6px_#ffcc00]" />
           <span>Medium</span>
         </div>
-        <div className={`flex items-center gap-2 transition ${severityFilter !== "all" && severityFilter !== "low" ? "opacity-30" : ""}`}>
+        <div
+          className={`flex items-center gap-2 transition ${
+            severityFilter !== "all" && severityFilter !== "low" ? "opacity-30" : ""
+          }`}
+        >
           <span className="w-3 h-3 rounded-full bg-[#00e676] shadow-[0_0_6px_#00e676]" />
           <span>Low</span>
         </div>
+      </div>
+
+      {/* Heatmap toggle button (bottom-right) */}
+      <div className="absolute bottom-4 right-4 z-[1000] bg-black/85 text-white text-xs rounded-lg p-3 border border-zinc-700 backdrop-blur-sm">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={heatmapVisible}
+            onChange={(e) => setHeatmapVisible(e.target.checked)}
+          />
+          <span>Heatmap Overlay</span>
+        </label>
       </div>
     </div>
   );

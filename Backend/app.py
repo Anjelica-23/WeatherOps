@@ -455,6 +455,126 @@ def compute_block_risk():
     return result
 
 # ============================================================
+# Tehsil Details Endpoint
+# ============================================================
+
+# Define the 7 tehsils with metadata
+DEHRADUN_TEHSILS = {
+    "Tyuni":      {"notes": "Upper Tons highland tehsil · remote ridge settlements", "area_km2": 520},
+    "Chakrata":   {"notes": "Upper-mid highland tehsil · Jaunsar-Bawar terrain belt", "area_km2": 960},
+    "Kalsi":      {"notes": "Transitional mid-hill tehsil · Yamuna-Tons corridor", "area_km2": 267},
+    "Vikasnagar": {"notes": "Western valley tehsil · Herbertpur-Selaqui belt", "area_km2": 697},
+    "Dehradun":   {"notes": "Central basin tehsil · urban core and peri-urban east", "area_km2": 790},
+    "Doiwala":    {"notes": "South-western plains tehsil · Song-Suswa corridor", "area_km2": 260},
+    "Rishikesh":  {"notes": "South-eastern tehsil · Ganga corridor and foothill floodplain", "area_km2": 312},
+}
+
+def composite_risk(point: dict) -> float:
+    """Average of flood, heat, wind, landslide risks."""
+    return (point["prob"] + point["wind_risk"] + point["heat_risk"] + point["landslide_risk"]) / 4.0
+
+@app.get("/api/tehsil_details")
+def get_tehsil_details():
+    try:
+        # Get prediction points (list of dicts with lat, lon, and hazards)
+        points = compute_predictions()
+        if not points:
+            return {"error": "No prediction points available"}
+
+        # Create a GeoDataFrame of points for spatial operations
+        import geopandas as gpd
+        from shapely.geometry import Point
+        points_gdf = gpd.GeoDataFrame(
+            points,
+            geometry=[Point(p["lon"], p["lat"]) for p in points],
+            crs="EPSG:4326"
+        )
+        points_gdf["composite"] = points_gdf.apply(composite_risk, axis=1)
+
+        # Load block geometries
+        blocks = load_blocks()
+        # Determine the column containing block names (similar to compute_block_risk)
+        name_col = None
+        for col in ["shapeName", "block", "name", "BLOCK", "Block"]:
+            if col in blocks.columns:
+                name_col = col
+                break
+        if name_col is None:
+            raise ValueError("Block name column not found in Doon_Blocks.gpkg")
+
+        # Build a mapping from canonical tehsil name to geometry
+        geom_map = {}
+        for _, row in blocks.iterrows():
+            raw_name = row[name_col]
+            # Normalise name: strip, title case, and map aliases
+            norm = raw_name.strip().title()
+            # Map known aliases (optional)
+            alias_map = {
+                "Vikas Nagar": "Vikasnagar",
+                "Doiwala Tehsil": "Doiwala",
+                "Rishikesh Tehsil": "Rishikesh",
+            }
+            norm = alias_map.get(norm, norm)
+            if norm in DEHRADUN_TEHSILS:
+                geom_map[norm] = row.geometry
+
+        # Get existing block risk scores (from compute_block_risk)
+        block_risks = compute_block_risk()
+
+        # Build the result array
+        result = []
+        for name, meta in DEHRADUN_TEHSILS.items():
+            geom = geom_map.get(name)
+            if geom is None:
+                # If geometry missing, skip or use a fallback
+                continue
+
+            # Points inside this block
+            inside = points_gdf[points_gdf.within(geom)]
+            if not inside.empty:
+                local_pts = len(inside)
+                interp = inside["composite"].mean()
+                # Confidence based on number of local points (max 100)
+                confidence = min(100, 50 + 10 * local_pts)
+                reason = f"interpolated hotspot confirmed by {local_pts} local point(s)"
+            else:
+                local_pts = 0
+                # Find nearest point
+                distances = points_gdf.geometry.distance(geom)
+                nearest_idx = distances.idxmin()
+                nearest = points_gdf.loc[nearest_idx]
+                interp = nearest["composite"]
+                dist_deg = distances[nearest_idx]
+                dist_km = dist_deg * 111  # approximate degrees to km
+                confidence = max(30, 100 - 5 * dist_km)
+                reason = f"no direct in-block point; risk inferred from nearby points ({dist_km:.1f} km)"
+
+            # Get hazard scores for this tehsil
+            hazards = block_risks.get(name, {"flood": 0, "heat": 0, "wind": 0, "landslide": 0})
+
+            result.append({
+                "name": name,
+                "notes": meta["notes"],
+                "areaKm2": meta["area_km2"],
+                "hazards": {
+                    "flood": float(hazards.get("flood", 0)),
+                    "heat": float(hazards.get("heat", 0)),
+                    "wind": float(hazards.get("wind", 0)),
+                    "landslide": float(hazards.get("landslide", 0)),
+                },
+                "interp": float(interp),
+                "localPts": local_pts,
+                "confidence": float(confidence),
+                "reason": reason,
+            })
+
+        return result
+
+    except Exception as e:
+        print(f"Error in /api/tehsil_details: {e}")
+        return {"error": str(e)}
+
+# ============================================================
 # ENDPOINTS
 # ============================================================
 
