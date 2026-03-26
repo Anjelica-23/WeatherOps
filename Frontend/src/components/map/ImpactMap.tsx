@@ -24,6 +24,15 @@ import "leaflet.heat";
 import "./impactMap.css";
 import { API_BASE } from "../../config";
 
+interface HazardPoint {
+  lat: number;
+  lon: number;
+  prob: number;
+  heat_risk: number;
+  wind_risk: number;
+  landslide_risk: number;
+}
+
 // ============================================================
 // Helper: fly to selected action
 // ============================================================
@@ -57,16 +66,16 @@ function HeatmapLayer({ visible, points }: { visible: boolean; points: [number, 
     let heatLayer: L.HeatLayer | null = null;
     if (visible && points.length > 0) {
       heatLayer = L.heatLayer(points, {
-        radius: 35,          // larger radius for smoother spread
-        blur: 20,            // more blur to blend
+        radius: 35,
+        blur: 20,
         maxZoom: 17,
         minOpacity: 0.3,
         gradient: {
-          0.0: "#00c9a7",   // low
-          0.25: "#f0a500",  // moderate
-          0.5: "#f06830",   // high
-          0.75: "#e84040",  // critical
-          1.0: "#ff0000"
+          0.0: '#00c9a7',   // low – teal
+          0.25: '#f0a500',  // moderate – amber
+          0.5: '#f06830',   // high – orange
+          0.75: '#e84040',  // critical – red
+          1.0: '#ff0000'    // very high – bright red
         }
       });
       heatLayer.addTo(map);
@@ -182,7 +191,7 @@ export default function ImpactMap({
   const [blockRisk, setBlockRisk] = useState<Record<string, any>>({});
   const [heatmapVisible, setHeatmapVisible] = useState(false);
   const [heatmapPoints, setHeatmapPoints] = useState<[number, number, number][]>([]);
-
+  const [allPoints, setAllPoints] = useState<HazardPoint[]>([]);
 
   // Fetch boundaries and block risk on mount
   useEffect(() => {
@@ -194,22 +203,42 @@ export default function ImpactMap({
       .catch(console.error);
   }, []);
 
-  // Fetch heatmap points (500 points with risk)
+  // Fetch all points once (contains flood, heat, wind, landslide risks)
   useEffect(() => {
     axios
       .get(`${API_BASE}/api/flood_heatmap`)
       .then((res) => {
-        const points = res.data.points;
-        // Use flood risk (prob) as intensity. You could also average all hazards.
-        const heatPoints = points.map((p: any) => [p.lat, p.lon, p.prob]);
-        setHeatmapPoints(heatPoints);
+        const points: HazardPoint[] = res.data.points;
+        setAllPoints(points);
       })
       .catch(console.error);
   }, []);
 
-  // ============================================================
-  // Compute cluster statistics for blocks (like Streamlit)
-  // ============================================================
+  // Update heatmap points when hazard changes or allPoints changes
+  useEffect(() => {
+    if (!allPoints.length) return;
+    let riskKey: keyof HazardPoint = "prob";
+    switch (hazard) {
+      case "FLOOD":
+        riskKey = "prob";
+        break;
+      case "HEAT":
+        riskKey = "heat_risk";
+        break;
+      case "WIND":
+        riskKey = "wind_risk";
+        break;
+      case "LANDSLIDE":
+        riskKey = "landslide_risk";
+        break;
+      default:
+        riskKey = "prob";
+    }
+    const heatPoints: [number, number, number][] = allPoints.map((p) => [p.lat, p.lon, p[riskKey]]);
+    setHeatmapPoints(heatPoints);
+  }, [hazard, allPoints]);
+
+  // Compute tehsil clusters for block tooltips
   const tehsilClusters = useMemo(() => {
     if (!blocks || !actions.length) return {};
 
@@ -249,53 +278,32 @@ export default function ImpactMap({
     return result;
   }, [actions, blocks]);
 
-  function isPointInPolygon(point: L.LatLng, geom: any): boolean {
-    if (geom.type === "Polygon") {
-      return pointInPolygon(point, geom.coordinates[0]);
-    } else if (geom.type === "MultiPolygon") {
-      return geom.coordinates.some((poly: any) => pointInPolygon(point, poly[0]));
-    }
-    return false;
-  }
-
-  function pointInPolygon(point: L.LatLng, ring: number[][]): boolean {
-    let inside = false;
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const xi = ring[i][0],
-        yi = ring[i][1];
-      const xj = ring[j][0],
-        yj = ring[j][1];
-      const intersect =
-        yi > point.lat != yj > point.lat &&
-        point.lng < ((xj - xi) * (point.lat - yi)) / (yj - yi) + xi;
-      if (intersect) inside = !inside;
-    }
-    return inside;
-  }
-
+  // Block style – dynamic fill opacity based on heatmap visibility
   const blockStyle = useMemo(() => {
     return (feature: any) => {
       const rawName =
-      feature.properties?.shapeName ||
-      feature.properties?.block ||
-      feature.properties?.name;
-    const canonical = normalizeBlockName(rawName);
-    const fillColor = BLOCK_COLORS[canonical] || "#8a93a8";
-    const cluster = tehsilClusters[canonical];
-    const hasPoints = cluster && cluster.count > 0;
-    const fillOpacity = heatmapVisible
-    ? 0.05
-    : hasPoints
-    ? 0.34
-    : 0.08;
+        feature.properties?.shapeName ||
+        feature.properties?.block ||
+        feature.properties?.name;
+      const canonical = normalizeBlockName(rawName);
+      const fillColor = BLOCK_COLORS[canonical] || "#8a93a8";
+      const cluster = tehsilClusters[canonical];
+      const hasPoints = cluster && cluster.count > 0;
 
-    return {
-      color: "#7a9af2",
-      weight: 0.5,
-      fillColor: fillColor,
-      fillOpacity: fillOpacity,
+      // When heatmap is visible, make fill almost transparent
+      const fillOpacity = heatmapVisible
+        ? 0.05
+        : hasPoints
+        ? 0.34
+        : 0.08;
+
+      return {
+        color: "#7a9af2",
+        weight: 0.5,
+        fillColor: fillColor,
+        fillOpacity: fillOpacity,
+      };
     };
-  };
   }, [heatmapVisible, tehsilClusters]);
 
   const onEachBlock = (feature: any, layer: any) => {
@@ -431,6 +439,30 @@ export default function ImpactMap({
   const highIcon = createPulseIcon("#ff2244", 24);
   const highIconSel = createPulseIcon("#ff6680", 32);
 
+  function isPointInPolygon(point: L.LatLng, geom: any): boolean {
+    if (geom.type === "Polygon") {
+      return pointInPolygon(point, geom.coordinates[0]);
+    } else if (geom.type === "MultiPolygon") {
+      return geom.coordinates.some((poly: any) => pointInPolygon(point, poly[0]));
+    }
+    return false;
+  }
+
+  function pointInPolygon(point: L.LatLng, ring: number[][]): boolean {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0],
+        yi = ring[i][1];
+      const xj = ring[j][0],
+        yj = ring[j][1];
+      const intersect =
+        yi > point.lat != yj > point.lat &&
+        point.lng < ((xj - xi) * (point.lat - yi)) / (yj - yi) + xi;
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
   return (
     <div className="relative w-full h-full">
       <MapContainer
@@ -475,87 +507,89 @@ export default function ImpactMap({
 
         <FlyToAction actions={actions} selectedActionId={selectedActionId} />
 
-        {actions.flatMap((action) =>
-          action.locations
-            .filter((loc) => severityFilter === "all" || loc.severity === severityFilter)
-            .map((loc) => {
-              const isSelected = selectedActionId === action.id;
-              const emoji = HAZARD_EMOJI[action.hazard?.toUpperCase()] ?? "⚠️";
-              const locationName = loc.location_name || action.where || "Dehradun Zone";
+        {/* Only show markers when heatmap is NOT visible */}
+        {!heatmapVisible &&
+          actions.flatMap((action) =>
+            action.locations
+              .filter((loc) => severityFilter === "all" || loc.severity === severityFilter)
+              .map((loc) => {
+                const isSelected = selectedActionId === action.id;
+                const emoji = HAZARD_EMOJI[action.hazard?.toUpperCase()] ?? "⚠️";
+                const locationName = loc.location_name || action.where || "Dehradun Zone";
 
-              const tooltipContent = `
-                <div style="font-family:monospace;font-size:12px;line-height:1.8;min-width:200px">
-                  <div style="font-weight:700;font-size:13px;margin-bottom:4px;color:#fff">
-                    ${emoji} ${action.title}
-                  </div>
-                  <div style="color:#00c9a7;margin-bottom:2px">
-                    📍 ${locationName}
-                  </div>
-                  <div style="color:#aaa">
-                    ${loc.lat.toFixed(4)}°N, ${loc.lon.toFixed(4)}°E
-                  </div>
-                  <hr style="border-color:#333;margin:4px 0"/>
-                  <div style="color:#60a5fa;text-transform:uppercase;font-size:11px;letter-spacing:.08em">
-                    ${action.hazard}
-                  </div>
-                  <div style="margin-top:2px">
-                    Severity: <strong style="color:${
-                      loc.severity === "high"
-                        ? "#ff2244"
-                        : loc.severity === "medium"
-                        ? "#ffcc00"
-                        : "#00e676"
-                    }">${loc.severity.toUpperCase()}</strong>
-                  </div>
-                  <div style="color:#aaa;font-size:11px;margin-top:2px">
-                    ⏱ ${action.when}
-                  </div>
-                  <div style="color:#aaa;font-size:11px">
-                    Confidence: ${Math.round(action.confidence[0] * 100)}–${Math.round(
-                action.confidence[1] * 100
-              )}%
-                  </div>
-                </div>`;
+                const tooltipContent = `
+                  <div style="font-family:monospace;font-size:12px;line-height:1.8;min-width:200px">
+                    <div style="font-weight:700;font-size:13px;margin-bottom:4px;color:#fff">
+                      ${emoji} ${action.title}
+                    </div>
+                    <div style="color:#00c9a7;margin-bottom:2px">
+                      📍 ${locationName}
+                    </div>
+                    <div style="color:#aaa">
+                      ${loc.lat.toFixed(4)}°N, ${loc.lon.toFixed(4)}°E
+                    </div>
+                    <hr style="border-color:#333;margin:4px 0"/>
+                    <div style="color:#60a5fa;text-transform:uppercase;font-size:11px;letter-spacing:.08em">
+                      ${action.hazard}
+                    </div>
+                    <div style="margin-top:2px">
+                      Severity: <strong style="color:${
+                        loc.severity === "high"
+                          ? "#ff2244"
+                          : loc.severity === "medium"
+                          ? "#ffcc00"
+                          : "#00e676"
+                      }">${loc.severity.toUpperCase()}</strong>
+                    </div>
+                    <div style="color:#aaa;font-size:11px;margin-top:2px">
+                      ⏱ ${action.when}
+                    </div>
+                    <div style="color:#aaa;font-size:11px">
+                      Confidence: ${Math.round(action.confidence[0] * 100)}–${Math.round(
+                  action.confidence[1] * 100
+                )}%
+                    </div>
+                  </div>`;
 
-              if (loc.severity === "high") {
+                if (loc.severity === "high") {
+                  return (
+                    <Marker
+                      key={loc.id}
+                      position={[loc.lat, loc.lon]}
+                      icon={isSelected ? highIconSel : highIcon}
+                      eventHandlers={{ click: () => onSelectAction(action.id) }}
+                      zIndexOffset={isSelected ? 1000 : 500}
+                    >
+                      <Tooltip direction="top" opacity={1} sticky offset={[0, -8]}>
+                        <div dangerouslySetInnerHTML={{ __html: tooltipContent }} />
+                      </Tooltip>
+                    </Marker>
+                  );
+                }
+
+                const color = loc.severity === "medium" ? "#ffcc00" : "#00e676";
+                const radius = isSelected ? 9 : loc.severity === "medium" ? 6 : 5;
+
                 return (
-                  <Marker
+                  <CircleMarker
                     key={loc.id}
-                    position={[loc.lat, loc.lon]}
-                    icon={isSelected ? highIconSel : highIcon}
+                    center={[loc.lat, loc.lon]}
+                    radius={radius}
+                    pathOptions={{
+                      fillColor: color,
+                      color: isSelected ? "#ffffff" : color,
+                      weight: isSelected ? 2.5 : 1,
+                      fillOpacity: isSelected ? 1 : 0.8,
+                    }}
                     eventHandlers={{ click: () => onSelectAction(action.id) }}
-                    zIndexOffset={isSelected ? 1000 : 500}
                   >
-                    <Tooltip direction="top" opacity={1} sticky offset={[0, -8]}>
+                    <Tooltip direction="top" opacity={1} sticky offset={[0, -4]}>
                       <div dangerouslySetInnerHTML={{ __html: tooltipContent }} />
                     </Tooltip>
-                  </Marker>
+                  </CircleMarker>
                 );
-              }
-
-              const color = loc.severity === "medium" ? "#ffcc00" : "#00e676";
-              const radius = isSelected ? 9 : loc.severity === "medium" ? 6 : 5;
-
-              return (
-                <CircleMarker
-                  key={loc.id}
-                  center={[loc.lat, loc.lon]}
-                  radius={radius}
-                  pathOptions={{
-                    fillColor: color,
-                    color: isSelected ? "#ffffff" : color,
-                    weight: isSelected ? 2.5 : 1,
-                    fillOpacity: isSelected ? 1 : 0.8,
-                  }}
-                  eventHandlers={{ click: () => onSelectAction(action.id) }}
-                >
-                  <Tooltip direction="top" opacity={1} sticky offset={[0, -4]}>
-                    <div dangerouslySetInnerHTML={{ __html: tooltipContent }} />
-                  </Tooltip>
-                </CircleMarker>
-              );
-            })
-        )}
+              })
+          )}
 
         {/* Heatmap layer */}
         <HeatmapLayer visible={heatmapVisible} points={heatmapPoints} />

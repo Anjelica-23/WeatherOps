@@ -458,7 +458,6 @@ def compute_block_risk():
 # Tehsil Details Endpoint
 # ============================================================
 
-# Define the 7 tehsils with metadata
 DEHRADUN_TEHSILS = {
     "Tyuni":      {"notes": "Upper Tons highland tehsil · remote ridge settlements", "area_km2": 520},
     "Chakrata":   {"notes": "Upper-mid highland tehsil · Jaunsar-Bawar terrain belt", "area_km2": 960},
@@ -476,12 +475,12 @@ def composite_risk(point: dict) -> float:
 @app.get("/api/tehsil_details")
 def get_tehsil_details():
     try:
-        # Get prediction points (list of dicts with lat, lon, and hazards)
+        # 1. Get prediction points
         points = compute_predictions()
         if not points:
             return {"error": "No prediction points available"}
 
-        # Create a GeoDataFrame of points for spatial operations
+        # 2. Build GeoDataFrame of points
         import geopandas as gpd
         from shapely.geometry import Point
         points_gdf = gpd.GeoDataFrame(
@@ -491,9 +490,8 @@ def get_tehsil_details():
         )
         points_gdf["composite"] = points_gdf.apply(composite_risk, axis=1)
 
-        # Load block geometries
+        # 3. Load block geometries and get name column
         blocks = load_blocks()
-        # Determine the column containing block names (similar to compute_block_risk)
         name_col = None
         for col in ["shapeName", "block", "name", "BLOCK", "Block"]:
             if col in blocks.columns:
@@ -502,41 +500,52 @@ def get_tehsil_details():
         if name_col is None:
             raise ValueError("Block name column not found in Doon_Blocks.gpkg")
 
-        # Build a mapping from canonical tehsil name to geometry
-        geom_map = {}
+        # 4. Build mapping from canonical tehsil name to geometry
+        #    Also build mapping from raw block name to canonical name for later use
+        geom_map = {}            # canonical -> geometry
+        raw_to_canonical = {}    # raw block name -> canonical
+        alias_map = {
+            "Vikas Nagar": "Vikasnagar",
+            "Doiwala Tehsil": "Doiwala",
+            "Rishikesh Tehsil": "Rishikesh",
+        }
         for _, row in blocks.iterrows():
             raw_name = row[name_col]
-            # Normalise name: strip, title case, and map aliases
             norm = raw_name.strip().title()
-            # Map known aliases (optional)
-            alias_map = {
-                "Vikas Nagar": "Vikasnagar",
-                "Doiwala Tehsil": "Doiwala",
-                "Rishikesh Tehsil": "Rishikesh",
-            }
             norm = alias_map.get(norm, norm)
             if norm in DEHRADUN_TEHSILS:
                 geom_map[norm] = row.geometry
+                raw_to_canonical[raw_name] = norm
 
-        # Get existing block risk scores (from compute_block_risk)
+        # 5. Get block risk scores (raw keys are the original block names)
         block_risks = compute_block_risk()
 
-        # Build the result array
+        # 6. Build a dictionary of hazard scores keyed by canonical name
+        canonical_hazards = {}
+        for raw_name, hazard_dict in block_risks.items():
+            canon = raw_to_canonical.get(raw_name)
+            if canon:
+                canonical_hazards[canon] = hazard_dict
+
+        # 7. Build the result for each canonical tehsil
         result = []
         for name, meta in DEHRADUN_TEHSILS.items():
             geom = geom_map.get(name)
             if geom is None:
-                # If geometry missing, skip or use a fallback
                 continue
 
-            # Points inside this block
+            # Points inside this tehsil
             inside = points_gdf[points_gdf.within(geom)]
             if not inside.empty:
                 local_pts = len(inside)
                 interp = inside["composite"].mean()
-                # Confidence based on number of local points (max 100)
-                confidence = min(100, 50 + 10 * local_pts)
+                # Confidence based on number of local points (Streamlit style)
+                # 1→57%, 3→71%, 7→98%
+                confidence = min(100, 50 + 7 * local_pts)
                 reason = f"interpolated hotspot confirmed by {local_pts} local point(s)"
+                # Special reason for single point
+                if local_pts == 1:
+                    reason = "elevated surface with one in-block trigger point"
             else:
                 local_pts = 0
                 # Find nearest point
@@ -546,11 +555,19 @@ def get_tehsil_details():
                 interp = nearest["composite"]
                 dist_deg = distances[nearest_idx]
                 dist_km = dist_deg * 111  # approximate degrees to km
-                confidence = max(30, 100 - 5 * dist_km)
+                # Distance-based confidence (matching Streamlit thresholds)
+                if dist_km < 5:
+                    confidence = 60
+                elif dist_km < 10:
+                    confidence = 50
+                elif dist_km < 15:
+                    confidence = 40
+                else:
+                    confidence = 35
                 reason = f"no direct in-block point; risk inferred from nearby points ({dist_km:.1f} km)"
 
-            # Get hazard scores for this tehsil
-            hazards = block_risks.get(name, {"flood": 0, "heat": 0, "wind": 0, "landslide": 0})
+            # Get hazard scores for this tehsil from the canonical dictionary
+            hazards = canonical_hazards.get(name, {"flood": 0, "heat": 0, "wind": 0, "landslide": 0})
 
             result.append({
                 "name": name,
