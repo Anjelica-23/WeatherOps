@@ -77,13 +77,14 @@ function HeatmapLayer({ visible, points }: { visible: boolean; points: [number, 
       });
 
       heatLayer = L.heatLayer(scaledPoints, {
-        radius: 20,
+        radius: 10,
         blur: 10,
-        maxZoom: 17,
-        minOpacity: 0.4,
+        maxZoom: 10,
+        minOpacity: 0.2,
         gradient: {
-          0.0: '#00c9a7',   // LOW
-          0.5: '#f0a500',   // MODERATE
+          0.0: '#8eebdc',   // LOW
+          0.4: '#29edcc',
+          0.8: '#f0a500',   // MODERATE
           1.0: '#f06830',   // HIGH
 
         }
