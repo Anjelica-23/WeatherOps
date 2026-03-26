@@ -68,7 +68,7 @@ export default function TehsilCard({ tehsil }: TehsilCardProps) {
       </div>
 
       <div className="text-xs text-zinc-400 font-mono mb-1">
-        Interp={tehsil.interp.toFixed(2)} - LocalPts={tehsil.localPts} - Conf={tehsil.confidence.toFixed(0)}% {getRiskLevel(tehsil.interp)}: {tehsil.reason}
+        Interp={tehsil.interp.toFixed(2)} - LocalPts={tehsil.localPts}  {getRiskLevel(tehsil.interp)}: {tehsil.reason}
       </div>
     </div>
   );
