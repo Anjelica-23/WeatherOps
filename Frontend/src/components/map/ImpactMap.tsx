@@ -65,16 +65,25 @@ function HeatmapLayer({ visible, points }: { visible: boolean; points: [number, 
   useEffect(() => {
     let heatLayer: L.HeatLayer | null = null;
     if (visible && points.length > 0) {
-      heatLayer = L.heatLayer(points, {
-        radius: 35,
-        blur: 20,
+      // Enhance contrast and ensure tuple type
+      const scaledPoints: [number, number, number][] = points.map(([lat, lon, intensity]) => {
+        // Boost low intensities
+        const enhanced = Math.min(intensity * 1.5, 1);
+        const scaled = Math.pow(enhanced, 0.7);
+        return [lat, lon, scaled];
+      });
+
+      heatLayer = L.heatLayer(scaledPoints, {
+        radius: 20,          // smaller radius = sharper hotspots
+        blur: 10,            // less blur = more defined edges
         maxZoom: 17,
-        minOpacity: 0.3,
+        minOpacity: 0.4,
         gradient: {
           0.0: '#00c9a7',   // low – teal
-          0.25: '#f0a500',  // moderate – amber
-          0.5: '#f06830',   // high – orange
-          0.75: '#e84040',  // critical – red
+          0.2: '#60a5fa',   // low‑mod – blue
+          0.4: '#f0a500',   // moderate – amber
+          0.6: '#f06830',   // high – orange
+          0.8: '#e84040',   // critical – red
           1.0: '#ff0000'    // very high – bright red
         }
       });

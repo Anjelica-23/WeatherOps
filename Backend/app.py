@@ -501,7 +501,7 @@ def get_tehsil_details():
             raise ValueError("Block name column not found in Doon_Blocks.gpkg")
 
         # 4. Build mapping from canonical tehsil name to geometry
-        #    Also build mapping from raw block name to canonical name for later use
+        #    Also build mapping from raw block name to canonical name
         geom_map = {}            # canonical -> geometry
         raw_to_canonical = {}    # raw block name -> canonical
         alias_map = {
@@ -521,11 +521,23 @@ def get_tehsil_details():
         block_risks = compute_block_risk()
 
         # 6. Build a dictionary of hazard scores keyed by canonical name
+        # First build reverse mapping from canonical to possible raw names
+        canonical_to_raws = {}
+        for raw_name, canon in raw_to_canonical.items():
+            canonical_to_raws.setdefault(canon, []).append(raw_name)
+
+        # Then for each canonical, find the hazard dict
         canonical_hazards = {}
-        for raw_name, hazard_dict in block_risks.items():
-            canon = raw_to_canonical.get(raw_name)
-            if canon:
-                canonical_hazards[canon] = hazard_dict
+        for canon, raw_names in canonical_to_raws.items():
+            # Try to find a raw name that exists in block_risks
+            for raw_name in raw_names:
+                if raw_name in block_risks:
+                    canonical_hazards[canon] = block_risks[raw_name]
+                    break
+            if canon not in canonical_hazards:
+                # Fallback: check if the canonical name itself is a key in block_risks
+                if canon in block_risks:
+                    canonical_hazards[canon] = block_risks[canon]
 
         # 7. Build the result for each canonical tehsil
         result = []
@@ -540,10 +552,8 @@ def get_tehsil_details():
                 local_pts = len(inside)
                 interp = inside["composite"].mean()
                 # Confidence based on number of local points (Streamlit style)
-                # 1→57%, 3→71%, 7→98%
                 confidence = min(100, 50 + 7 * local_pts)
                 reason = f"interpolated hotspot confirmed by {local_pts} local point(s)"
-                # Special reason for single point
                 if local_pts == 1:
                     reason = "elevated surface with one in-block trigger point"
             else:
